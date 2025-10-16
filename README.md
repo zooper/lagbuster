@@ -225,44 +225,44 @@ sudo birdc show protocols
 
 ## Example Scenarios
 
-### Scenario 1: NYC Region Degradation
+### Scenario 1: Regional Degradation
 
 ```
 Initial state:
-NYC01: 45ms (baseline: 45ms) → Primary, healthy
-ASH01: 52ms (baseline: 52ms) → Secondary, healthy
-NYC02: 55ms (baseline: 55ms) → Tertiary, healthy
+EDGE01: 45ms (baseline: 45ms) → Primary, healthy
+EDGE02: 52ms (baseline: 52ms) → Secondary, healthy
+EDGE03: 55ms (baseline: 55ms) → Tertiary, healthy
 
-NYC region experiences issues:
-NYC01: 95ms (baseline: 45ms, +50ms degradation) → UNHEALTHY
-ASH01: 53ms (baseline: 52ms, +1ms) → HEALTHY
-NYC02: 100ms (baseline: 55ms, +45ms degradation) → UNHEALTHY
+Region experiences network issues:
+EDGE01: 95ms (baseline: 45ms, +50ms degradation) → UNHEALTHY
+EDGE02: 53ms (baseline: 52ms, +1ms) → HEALTHY
+EDGE03: 100ms (baseline: 55ms, +45ms degradation) → UNHEALTHY
 
 Decision: After 3 consecutive unhealthy measurements
-→ Switch from NYC01 to ASH01
+→ Switch from EDGE01 to EDGE02
 → Reason: "current primary degraded (50.00ms above baseline)"
 ```
 
 ### Scenario 2: Minor Fluctuations
 
 ```
-NYC01: 52ms (baseline: 45ms, +7ms) → HEALTHY (within comfort threshold)
-ASH01: 51ms (baseline: 52ms)
-NYC02: 54ms (baseline: 55ms)
+EDGE01: 52ms (baseline: 45ms, +7ms) → HEALTHY (within comfort threshold)
+EDGE02: 51ms (baseline: 52ms)
+EDGE03: 54ms (baseline: 55ms)
 
-Decision: Stay on NYC01
+Decision: Stay on EDGE01
 → Reason: Current primary healthy and within comfort zone
-→ No unnecessary switching despite ASH01 being slightly faster
+→ No unnecessary switching despite EDGE02 being slightly faster
 ```
 
 ### Scenario 3: All Peers Degraded
 
 ```
-NYC01: 120ms → UNHEALTHY
-ASH01: 115ms → UNHEALTHY
-NYC02: 125ms → UNHEALTHY
+EDGE01: 120ms → UNHEALTHY
+EDGE02: 115ms → UNHEALTHY
+EDGE03: 125ms → UNHEALTHY
 
-Decision: Switch to ASH01 (least-bad option)
+Decision: Switch to EDGE02 (least-bad option)
 → Reason: All unhealthy, pick lowest current latency
 ```
 
