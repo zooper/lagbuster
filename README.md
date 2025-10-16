@@ -54,20 +54,20 @@ IF recently switched (within cooldown period):
 
 ```yaml
 peers:
-  - name: nyc01
-    hostname: router-nyc01.linuxburken.se
+  - name: edge01
+    hostname: edge01.example.com
     expected_baseline: 45.0  # Your expected "good" latency (ms)
-    bird_variable: jc01_nyc01_lagbuster_priority
+    bird_variable: core01_edge01_lagbuster_priority
 
-  - name: nyc02
-    hostname: router-nyc02.linuxburken.se
+  - name: edge02
+    hostname: edge02.example.com
     expected_baseline: 55.0
-    bird_variable: jc01_nyc02_lagbuster_priority
+    bird_variable: core01_edge02_lagbuster_priority
 
-  - name: ash01
-    hostname: router-ash01.linuxburken.se
+  - name: edge03
+    hostname: edge03.example.com
     expected_baseline: 52.0
-    bird_variable: jc01_ash01_lagbuster_priority
+    bird_variable: core01_edge03_lagbuster_priority
 
 thresholds:
   degradation_threshold: 20.0    # Switch if peer > baseline + 20ms
@@ -83,7 +83,7 @@ damping:
 
 startup:
   grace_period: 60                # Wait 60s before first change
-  initial_primary: nyc01          # Start with this peer
+  initial_primary: edge01         # Start with this peer
 
 bird:
   priorities_file: /etc/bird/lagbuster-priorities.conf
@@ -106,7 +106,7 @@ To find your expected baselines, run lagbuster manually and observe:
 ```bash
 # Run a few pings manually
 for i in {1..10}; do
-  ping -c 1 router-nyc01.linuxburken.se | grep time=
+  ping -c 1 edge01.example.com | grep time=
   sleep 1
 done
 
@@ -129,7 +129,7 @@ go build -o lagbuster lagbuster.go
 ### 2. Deploy to router
 
 ```bash
-# On router-jc01
+# On your core router
 sudo mkdir -p /opt/lagbuster
 sudo cp lagbuster /opt/lagbuster/
 sudo cp config.yaml /opt/lagbuster/
@@ -141,14 +141,14 @@ sudo chmod +x /opt/lagbuster/lagbuster
 This file must exist before Bird starts. Create it with initial default values:
 
 ```bash
-# On router-jc01
+# On your core router
 sudo tee /etc/bird/lagbuster-priorities.conf > /dev/null <<'EOF'
 # Lagbuster dynamic priority overrides
 # Initial values (will be updated by lagbuster)
 
-define jc01_nyc01_lagbuster_priority = 1;
-define jc01_nyc02_lagbuster_priority = 3;
-define jc01_ash01_lagbuster_priority = 2;
+define core01_edge01_lagbuster_priority = 1;
+define core01_edge02_lagbuster_priority = 3;
+define core01_edge03_lagbuster_priority = 2;
 EOF
 ```
 
@@ -165,10 +165,10 @@ Example changes:
 include "/etc/bird/lagbuster-priorities.conf";
 
 # In the filter logic, change from:
-if jc01_nyc01_priority = 1 then {
+if core01_edge01_priority = 1 then {
 
 # To:
-if jc01_nyc01_lagbuster_priority = 1 then {
+if core01_edge01_lagbuster_priority = 1 then {
 ```
 
 Run your Ansible playbook to apply these changes.
@@ -295,7 +295,7 @@ Run manual pings to observe typical latency:
 
 ```bash
 # 100 pings with 1 second interval
-ping -c 100 -i 1 router-nyc01.linuxburken.se | grep time= | \
+ping -c 100 -i 1 edge01.example.com | grep time= | \
   grep -oP 'time=\K[0-9.]+' | \
   awk '{s+=$1; n++} END {print "Avg:", s/n, "ms"}'
 ```
@@ -330,13 +330,13 @@ This will log all decisions without applying changes to Bird.
 
 ```
 [INFO] Lagbuster starting (version 1.0)
-[INFO] Initialized with 3 peers, primary: nyc01
+[INFO] Initialized with 3 peers, primary: edge01
 [INFO] Startup grace period: 60 seconds
-[INFO] Peer nyc01 became UNHEALTHY: latency=95.23ms, baseline=45.00ms, degradation=50.23ms
-[INFO] Best peer selection: ash01 (latency=52.11ms, healthy=true, 2/3 peers healthy)
-[INFO] SWITCHING PRIMARY: nyc01 -> ash01 | Reason: current primary degraded (50.23ms above baseline)
-[INFO]   Old: nyc01 latency=95.23ms baseline=45.00ms healthy=false
-[INFO]   New: ash01 latency=52.11ms baseline=52.00ms healthy=true
+[INFO] Peer edge01 became UNHEALTHY: latency=95.23ms, baseline=45.00ms, degradation=50.23ms
+[INFO] Best peer selection: edge03 (latency=52.11ms, healthy=true, 2/3 peers healthy)
+[INFO] SWITCHING PRIMARY: edge01 -> edge03 | Reason: current primary degraded (50.23ms above baseline)
+[INFO]   Old: edge01 latency=95.23ms baseline=45.00ms healthy=false
+[INFO]   New: edge03 latency=52.11ms baseline=52.00ms healthy=true
 [INFO] Bird configuration updated successfully
 ```
 
