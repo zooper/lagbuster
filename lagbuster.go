@@ -160,6 +160,19 @@ func main() {
 	// Run first measurement immediately
 	runMonitoringCycle(state)
 
+	// Apply initial Bird configuration based on first measurement
+	logger.Info("Applying initial Bird configuration with primary: %s", state.CurrentPrimary)
+	if !config.Mode.DryRun {
+		err := applyBirdConfiguration(state)
+		if err != nil {
+			logger.Error("Failed to apply initial Bird configuration: %v", err)
+		} else {
+			logger.Info("Initial Bird configuration applied successfully")
+		}
+	} else {
+		logger.Info("DRY-RUN: Would apply initial Bird configuration")
+	}
+
 	for range ticker.C {
 		runMonitoringCycle(state)
 	}
@@ -514,31 +527,39 @@ func applyBirdConfiguration(state *AppState) error {
 	return nil
 }
 
-// Assign priority values (1=best, 2=second, 3=third) based on current latency
+// Assign priority values (1=best, 2=second, 3=third) based on current primary
 func assignPriorities(state *AppState) map[string]int {
 	type peerLatency struct {
 		name    string
 		latency float64
 	}
 
-	peers := make([]peerLatency, 0, len(state.Peers))
+	priorities := make(map[string]int)
+
+	// Current primary always gets priority 1
+	priorities[state.CurrentPrimary] = 1
+
+	// Collect remaining peers
+	remainingPeers := make([]peerLatency, 0, len(state.Peers)-1)
 	for name, peer := range state.Peers {
+		if name == state.CurrentPrimary {
+			continue // Skip current primary
+		}
 		latency := peer.CurrentLatency
 		if latency < 0 {
 			latency = state.Config.Thresholds.TimeoutLatency
 		}
-		peers = append(peers, peerLatency{name: name, latency: latency})
+		remainingPeers = append(remainingPeers, peerLatency{name: name, latency: latency})
 	}
 
-	// Sort by latency (lowest first)
-	sort.Slice(peers, func(i, j int) bool {
-		return peers[i].latency < peers[j].latency
+	// Sort remaining peers by latency (lowest first)
+	sort.Slice(remainingPeers, func(i, j int) bool {
+		return remainingPeers[i].latency < remainingPeers[j].latency
 	})
 
-	// Assign priorities
-	priorities := make(map[string]int)
-	for i, peer := range peers {
-		priorities[peer.name] = i + 1
+	// Assign priorities 2, 3, etc. to remaining peers
+	for i, peer := range remainingPeers {
+		priorities[peer.name] = i + 2
 	}
 
 	return priorities

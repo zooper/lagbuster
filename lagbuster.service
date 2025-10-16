@@ -2,7 +2,6 @@
 Description=Lagbuster - BGP Path Optimizer
 Documentation=https://github.com/zooper/lagbuster
 After=network.target bird.service
-Requires=bird.service
 # Ensure lagbuster stops before Bird during shutdown
 Before=shutdown.target
 
