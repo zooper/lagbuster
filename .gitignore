@@ -1,0 +1,56 @@
+# Binaries
+lagbuster
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+*.coverage
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Dependency directories
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+
+# Runtime files
+*.log
+*.pid
+
+# Local config (use config.example.yaml as template)
+config.yaml
+config.local.yaml
+config.production.yaml
+config.*.yaml
+!config.example.yaml
+
+# Temporary files
+/tmp/
+*.tar.gz
+*.zip
+
+# Build artifacts
+dist/
+build/

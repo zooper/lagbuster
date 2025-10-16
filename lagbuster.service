@@ -1,0 +1,37 @@
+[Unit]
+Description=Lagbuster - BGP Path Optimizer
+Documentation=https://github.com/zooper/lagbuster
+After=network.target bird.service
+Requires=bird.service
+# Ensure lagbuster stops before Bird during shutdown
+Before=shutdown.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# Working directory
+WorkingDirectory=/opt/lagbuster
+
+# Start lagbuster
+ExecStart=/opt/lagbuster/lagbuster -config /opt/lagbuster/config.yaml
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lagbuster
+
+# Resource limits
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target
