@@ -118,6 +118,8 @@ Use the typical "good" latency you observe as your `expected_baseline`.
 
 ## Installation
 
+> **Note**: This section assumes you're using Ansible to manage Bird configuration. If you're managing Bird manually, see [MANUAL-SETUP.md](MANUAL-SETUP.md) for detailed instructions.
+
 ### 1. Build the binary
 
 ```bash
