@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -23,6 +24,7 @@ type Config struct {
 	Thresholds ThresholdConfig `yaml:"thresholds"`
 	Damping    DampingConfig   `yaml:"damping"`
 	Startup    StartupConfig   `yaml:"startup"`
+	Failback   FailbackConfig  `yaml:"failback"`
 	Bird       BirdConfig      `yaml:"bird"`
 	Logging    LoggingConfig   `yaml:"logging"`
 	Mode       ModeConfig      `yaml:"mode"`
@@ -50,8 +52,15 @@ type DampingConfig struct {
 }
 
 type StartupConfig struct {
-	GracePeriod    int    `yaml:"grace_period"`
-	InitialPrimary string `yaml:"initial_primary"`
+	GracePeriod      int    `yaml:"grace_period"`
+	InitialPrimary   string `yaml:"initial_primary"`
+	PreferredPrimary string `yaml:"preferred_primary"` // Optional: peer to failback to when healthy
+}
+
+type FailbackConfig struct {
+	Enabled                      bool `yaml:"enabled"`                          // Enable automatic failback to preferred primary
+	ConsecutiveHealthyCount      int  `yaml:"consecutive_healthy_count"`        // Measurements preferred peer must be healthy before failback
+	RequireCooldownBeforeFailback bool `yaml:"require_cooldown_before_failback"` // Wait for cooldown period before failback
 }
 
 type BirdConfig struct {
@@ -76,6 +85,7 @@ type PeerState struct {
 	Measurements              []float64
 	CurrentLatency            float64
 	ConsecutiveUnhealthyCount int
+	ConsecutiveHealthyCount   int
 	IsHealthy                 bool
 	IsPrimary                 bool
 }
@@ -256,7 +266,13 @@ func runMonitoringCycle(state *AppState) {
 
 // Ping a host and return latency in milliseconds
 // Uses IPv4 only to ensure consistent measurements
+// Uses context-based timeout to prevent hanging on unreachable hosts
 func pingHost(host string) float64 {
+	// Create context with 5-second timeout (safety margin above ping's 3s timeout)
+	// This ensures the command will be killed even if DNS hangs or ping doesn't timeout properly
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	var cmd *exec.Cmd
 
 	// Different ping syntax for different operating systems
@@ -264,15 +280,20 @@ func pingHost(host string) float64 {
 	// Linux: supports -4 flag for IPv4, -W is in milliseconds
 	if runtime.GOOS == "darwin" {
 		// macOS: ping is IPv4 by default, -t 3 = 3 second timeout, -W is broken on macOS
-		cmd = exec.Command("ping", "-c", "1", "-t", "3", host)
+		cmd = exec.CommandContext(ctx, "ping", "-c", "1", "-t", "3", host)
 	} else {
 		// Linux: use -4 flag to force IPv4, -W timeout in milliseconds
-		cmd = exec.Command("ping", "-4", "-c", "1", "-W", "3000", host)
+		cmd = exec.CommandContext(ctx, "ping", "-4", "-c", "1", "-W", "3000", host)
 	}
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		logger.Debug("Ping to %s failed: %v", host, err)
+		// Check if it was a timeout
+		if ctx.Err() == context.DeadlineExceeded {
+			logger.Warn("Ping to %s timed out after 5 seconds (host may be unreachable or DNS hanging)", host)
+		} else {
+			logger.Debug("Ping to %s failed: %v", host, err)
+		}
 		return -1
 	}
 
@@ -302,17 +323,28 @@ func evaluatePeerHealth(state *AppState) {
 		wasHealthy := peer.IsHealthy
 		peer.IsHealthy = isPeerHealthy(latency, baseline, state.Config.Thresholds)
 
-		// Track consecutive unhealthy count
+		// Track consecutive unhealthy/healthy counts
 		if !peer.IsHealthy {
 			peer.ConsecutiveUnhealthyCount++
+			peer.ConsecutiveHealthyCount = 0
 		} else {
 			peer.ConsecutiveUnhealthyCount = 0
+			peer.ConsecutiveHealthyCount++
 		}
 
 		// Log health transitions
 		if wasHealthy && !peer.IsHealthy {
-			logger.Info("Peer %s became UNHEALTHY: latency=%.2fms, baseline=%.2fms, degradation=%.2fms",
-				name, latency, baseline, latency-baseline)
+			if latency < 0 {
+				logger.Info("Peer %s became UNHEALTHY: unreachable/timeout, baseline=%.2fms",
+					name, baseline)
+			} else if latency > state.Config.Thresholds.AbsoluteMaxLatency {
+				logger.Info("Peer %s became UNHEALTHY: latency=%.2fms exceeds absolute max (%.2fms), baseline=%.2fms",
+					name, latency, state.Config.Thresholds.AbsoluteMaxLatency, baseline)
+			} else {
+				degradation := latency - baseline
+				logger.Info("Peer %s became UNHEALTHY: latency=%.2fms, baseline=%.2fms, degradation=%.2fms",
+					name, latency, baseline, degradation)
+			}
 		} else if !wasHealthy && peer.IsHealthy {
 			logger.Info("Peer %s became HEALTHY: latency=%.2fms, baseline=%.2fms",
 				name, latency, baseline)
@@ -347,9 +379,37 @@ func selectPrimary(state *AppState) string {
 	thresholds := state.Config.Thresholds
 	damping := state.Config.Damping
 
-	// Check if we're in cooldown period
+	// Check if we're in cooldown period (unless it's a failback attempt)
 	timeSinceSwitch := time.Since(state.LastSwitchTime).Seconds()
-	if timeSinceSwitch < float64(damping.CooldownPeriod) && !state.LastSwitchTime.IsZero() {
+	inCooldown := timeSinceSwitch < float64(damping.CooldownPeriod) && !state.LastSwitchTime.IsZero()
+
+	// Check for preferred primary failback
+	if state.Config.Failback.Enabled && state.Config.Startup.PreferredPrimary != "" {
+		preferredPrimary := state.Config.Startup.PreferredPrimary
+
+		// Only consider failback if we're not currently on preferred primary
+		if state.CurrentPrimary != preferredPrimary {
+			if preferredPeer, exists := state.Peers[preferredPrimary]; exists {
+				// Check if preferred peer is healthy and has sustained health
+				if preferredPeer.IsHealthy &&
+				   preferredPeer.ConsecutiveHealthyCount >= state.Config.Failback.ConsecutiveHealthyCount {
+
+					// Check if we need to wait for cooldown before failback
+					if state.Config.Failback.RequireCooldownBeforeFailback && inCooldown {
+						logger.Debug("Preferred primary %s ready for failback but in cooldown (%.0fs remaining)",
+							preferredPrimary, float64(damping.CooldownPeriod)-timeSinceSwitch)
+					} else {
+						logger.Info("Failing back to preferred primary %s (healthy for %d consecutive measurements)",
+							preferredPrimary, preferredPeer.ConsecutiveHealthyCount)
+						return preferredPrimary
+					}
+				}
+			}
+		}
+	}
+
+	// Standard cooldown check for non-failback switches
+	if inCooldown {
 		logger.Debug("In cooldown period (%.0fs remaining)",
 			float64(damping.CooldownPeriod)-timeSinceSwitch)
 		return state.CurrentPrimary
@@ -452,8 +512,9 @@ func switchPrimary(state *AppState, newPrimary string) {
 	state.CurrentPrimary = newPrimary
 	state.LastSwitchTime = time.Now()
 
-	// Reset consecutive unhealthy counter for new primary
+	// Reset consecutive counters for new primary
 	newPeer.ConsecutiveUnhealthyCount = 0
+	newPeer.ConsecutiveHealthyCount = 0
 
 	// Apply changes to Bird
 	if !state.Config.Mode.DryRun {
@@ -470,21 +531,30 @@ func switchPrimary(state *AppState, newPrimary string) {
 
 // Build human-readable switch reason
 func buildSwitchReason(oldPeer, newPeer *PeerState, thresholds ThresholdConfig) string {
-	if !oldPeer.IsHealthy {
+	// Check if this is a failback to preferred primary (old peer healthy)
+	if oldPeer.IsHealthy {
 		degradation := oldPeer.CurrentLatency - oldPeer.Config.ExpectedBaseline
-		if oldPeer.CurrentLatency < 0 {
-			return "current primary unreachable"
+
+		// If old peer is within comfort zone, this is likely a failback
+		if degradation <= thresholds.ComfortThreshold {
+			return fmt.Sprintf("failback to preferred primary (sustained health: %d measurements)",
+				newPeer.ConsecutiveHealthyCount)
 		}
-		if oldPeer.CurrentLatency > thresholds.AbsoluteMaxLatency {
-			return fmt.Sprintf("current primary exceeds absolute max (%.2fms > %.2fms)",
-				oldPeer.CurrentLatency, thresholds.AbsoluteMaxLatency)
-		}
-		return fmt.Sprintf("current primary degraded (%.2fms above baseline)", degradation)
+
+		// Old peer healthy but outside comfort zone
+		return fmt.Sprintf("current primary outside comfort zone (%.2fms above baseline)", degradation)
 	}
 
-	// Old peer is healthy but uncomfortable
+	// Old peer is unhealthy
 	degradation := oldPeer.CurrentLatency - oldPeer.Config.ExpectedBaseline
-	return fmt.Sprintf("current primary outside comfort zone (%.2fms above baseline)", degradation)
+	if oldPeer.CurrentLatency < 0 {
+		return "current primary unreachable"
+	}
+	if oldPeer.CurrentLatency > thresholds.AbsoluteMaxLatency {
+		return fmt.Sprintf("current primary exceeds absolute max (%.2fms > %.2fms)",
+			oldPeer.CurrentLatency, thresholds.AbsoluteMaxLatency)
+	}
+	return fmt.Sprintf("current primary degraded (%.2fms above baseline)", degradation)
 }
 
 // Apply Bird configuration changes

@@ -21,21 +21,22 @@ The application follows a monitoring loop architecture with these main phases:
 
 ### Key Data Structures
 
-- `AppState` (lagbuster.go:83-89): Top-level runtime state containing config, peer states, and current primary
-- `PeerState` (lagbuster.go:74-81): Per-peer runtime state with latency measurements, health status, and consecutive unhealthy counter
-- `Config` (lagbuster.go:21-29): Configuration loaded from YAML file with nested structures for thresholds, damping, Bird integration, etc.
+- `AppState` (lagbuster.go:93-99): Top-level runtime state containing config, peer states, and current primary
+- `PeerState` (lagbuster.go:83-91): Per-peer runtime state with latency measurements, health status, consecutive unhealthy counter, and consecutive healthy counter
+- `Config` (lagbuster.go:22-31): Configuration loaded from YAML file with nested structures for thresholds, damping, failback, Bird integration, etc.
 
 ### Decision Logic Flow
 
-The decision engine (`selectPrimary()` at lagbuster.go:332-370) follows this hierarchy:
+The decision engine (`selectPrimary()` at lagbuster.go:376-443) follows this hierarchy:
 
-1. **Cooldown check**: If recently switched (within `cooldown_period`), stay on current primary
-2. **Comfort zone**: If current primary is healthy AND within comfort threshold, stay (stability preferred)
-3. **Damping**: Only switch if current primary unhealthy for N consecutive measurements (`consecutive_unhealthy_count`)
-4. **Best alternative**: Find healthiest peer with lowest latency
+1. **Failback check**: If failback enabled and preferred primary has been healthy for required duration, switch back to it
+2. **Cooldown check**: If recently switched (within `cooldown_period`), stay on current primary (unless failback)
+3. **Comfort zone**: If current primary is healthy AND within comfort threshold, stay (stability preferred)
+4. **Damping**: Only switch if current primary unhealthy for N consecutive measurements (`consecutive_unhealthy_count`)
+5. **Best alternative**: Find healthiest peer with lowest latency
 
-Health evaluation (`isPeerHealthy()` at lagbuster.go:311-329):
-- Unhealthy if: ping fails, latency > baseline + degradation_threshold, OR latency > absolute_max_latency
+Health evaluation (`isPeerHealthy()` at lagbuster.go:356-374):
+- Unhealthy if: ping fails (latency = -1), latency > baseline + degradation_threshold, OR latency > absolute_max_latency
 - Comfortable if: latency < baseline + comfort_threshold
 
 ### Bird Integration
@@ -119,7 +120,8 @@ Example configuration structure in `config.yaml`:
 - **peers**: Array of edge routers with hostname, expected_baseline (ms), and bird_variable name
 - **thresholds**: degradation_threshold, comfort_threshold, absolute_max_latency, timeout_latency
 - **damping**: consecutive_unhealthy_count, measurement_interval, cooldown_period, measurement_window
-- **startup**: grace_period (delay before first change), initial_primary
+- **startup**: grace_period (delay before first change), initial_primary, preferred_primary (optional, for failback)
+- **failback**: enabled, consecutive_healthy_count, require_cooldown_before_failback
 - **bird**: priorities_file path, birdc_path, birdc_timeout
 - **logging**: level (debug/info/warn/error), log_measurements, log_decisions
 - **mode**: dry_run flag
@@ -130,10 +132,12 @@ See `config.example.yaml` for complete reference.
 
 ### Ping Command Differences
 
-The `pingHost()` function (lagbuster.go:246-280) handles OS-specific ping syntax:
+The `pingHost()` function (lagbuster.go:258-305) handles OS-specific ping syntax with context-based timeout protection:
 
 - **macOS**: `ping -c 1 -t 3 host` (ping is IPv4 by default, -t for timeout)
 - **Linux**: `ping -4 -c 1 -W 3000 host` (-4 forces IPv4, -W timeout in milliseconds)
+- **Timeout protection**: Uses `context.WithTimeout()` with 5-second deadline to prevent hanging on unreachable hosts or DNS issues
+- **Return value**: Returns -1 on timeout/failure, latency in milliseconds on success
 
 Always uses IPv4 to ensure consistent measurements across platforms.
 
@@ -160,9 +164,19 @@ This ensures Bird is always synchronized with lagbuster's state on startup and p
 
 Multiple mechanisms prevent route flapping:
 - **Consecutive unhealthy**: Requires N consecutive unhealthy measurements before switching away
+- **Consecutive healthy**: Tracks N consecutive healthy measurements for failback logic
 - **Cooldown period**: Minimum time between switches (prevents rapid oscillation)
 - **Comfort threshold**: Creates hysteresis band where current primary is preferred even if another peer is slightly better
 - **Measurement window**: Keeps rolling history for future enhancements (not currently used in decision logic)
+
+### Automatic Failback
+
+When enabled, lagbuster will automatically switch back to the `preferred_primary` peer after it recovers:
+- Tracks consecutive healthy measurements for each peer
+- Failback occurs when preferred primary has been healthy for `consecutive_healthy_count` measurements
+- Optional cooldown protection: `require_cooldown_before_failback` ensures minimum time since last switch
+- Prevents comparing latencies between geographically different peers
+- Logged with reason: "failback to preferred primary (sustained health: N measurements)"
 
 ### Logging
 
@@ -173,9 +187,11 @@ The Logger wrapper (lagbuster.go:92-122) supports hierarchical levels:
 - `error`: Failures only
 
 Key log patterns:
-- Health transitions: "Peer X became UNHEALTHY/HEALTHY"
-- Switches: "SWITCHING PRIMARY: X -> Y | Reason: ..."
+- Health transitions: "Peer X became UNHEALTHY/HEALTHY" (with reason for unhealthy: unreachable/timeout, exceeds max, or degradation)
+- Switches: "SWITCHING PRIMARY: X -> Y | Reason: ..." (includes failback, unreachable, degraded, or comfort zone)
+- Failback: "Failing back to preferred primary X (healthy for N consecutive measurements)"
 - Best peer selection: Shows which peer selected and why
+- Timeout warnings: "Ping to X timed out after 5 seconds (host may be unreachable or DNS hanging)"
 - Decision rationale: Logged when `log_decisions: true`
 
 ## Code Style
@@ -217,17 +233,28 @@ See `MANUAL-SETUP.md` for detailed Bird configuration examples.
 
 ## Files Structure
 
-- `lagbuster.go`: Complete application (582 lines)
+- `lagbuster.go`: Complete application (~600 lines)
 - `config.yaml`: Active configuration (user creates from example)
 - `config.example.yaml`: Configuration template with documentation
 - `lagbuster.service`: systemd service definition
 - `README.md`: Complete user documentation
 - `MANUAL-SETUP.md`: Detailed setup guide for non-Ansible users
 - `ansible-example-changes.md`: Ansible integration reference
+- `CLAUDE.md`: This file - AI assistant guidance
+
+## Recent Enhancements (2025-10-17)
+
+**Critical Bug Fixes:**
+1. **Context-based timeout protection**: Added `context.WithTimeout()` to `pingHost()` to prevent infinite hanging when hosts are unreachable or DNS fails. This fixes a critical issue where lagbuster would completely freeze during network outages.
+
+2. **Improved unhealthy logging**: Better error messages showing "unreachable/timeout" instead of confusing negative latency values.
+
+**New Features:**
+3. **Automatic failback**: Added `preferred_primary` configuration and automatic failback logic. When enabled, lagbuster will switch back to the preferred peer after it has been healthy for a configurable duration (default: 30 minutes). This allows geographically-dispersed peers without comparing latencies.
 
 ## Future Enhancements
 
-Listed in README.md but not implemented:
+Listed in README.md but not yet implemented:
 - Packet loss monitoring (currently latency only)
 - Adaptive baselines (currently static only)
 - Prometheus metrics export

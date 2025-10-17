@@ -54,6 +54,25 @@ startup:
   # Initial primary peer (by name) - will be used until grace period expires
   initial_primary: edge01
 
+  # Preferred primary for automatic failback (optional)
+  # If set and failback is enabled, lagbuster will automatically switch back to this peer
+  # after it has been healthy for the configured duration
+  preferred_primary: edge01  # must match a peer name above
+
+# Automatic failback to preferred primary
+failback:
+  # Enable automatic failback to preferred primary when it recovers
+  enabled: true
+
+  # Number of consecutive healthy measurements required before failing back
+  # With measurement_interval=10s, 180 measurements = 30 minutes of sustained health
+  consecutive_healthy_count: 180  # measurements (e.g., 180 × 10s = 30 minutes)
+
+  # Wait for cooldown period to complete before allowing failback
+  # If false, failback can happen immediately after consecutive_healthy_count is reached
+  # If true, must also wait cooldown_period seconds since last switch
+  require_cooldown_before_failback: true
+
 # Bird integration
 bird:
   # Path to lagbuster-managed priorities file
