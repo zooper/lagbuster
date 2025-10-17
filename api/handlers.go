@@ -256,6 +256,12 @@ func (s *Server) handleGetNotificationSettings(w http.ResponseWriter, r *http.Re
 	s.state.mu.RLock()
 	defer s.state.mu.RUnlock()
 
+	// Check if config is available
+	if s.state.Config == nil {
+		writeError(w, "notification settings not available", http.StatusServiceUnavailable)
+		return
+	}
+
 	// Build response from config
 	resp := NotificationSettingsResponse{
 		Enabled:          s.state.Config.Notifications.Enabled,
@@ -300,6 +306,11 @@ func (s *Server) handleUpdateNotificationSettings(w http.ResponseWriter, r *http
 
 	// Update config
 	s.state.mu.Lock()
+	if s.state.Config == nil {
+		s.state.mu.Unlock()
+		writeError(w, "notification settings not available", http.StatusServiceUnavailable)
+		return
+	}
 	s.state.Config.Notifications.Enabled = req.Enabled
 	s.state.Config.Notifications.RateLimitMinutes = req.RateLimitMinutes
 
