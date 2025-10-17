@@ -231,6 +231,36 @@ func main() {
 			LastSwitchTime: state.LastSwitchTime,
 			StartTime:      state.StartTime,
 			Peers:          make(map[string]*api.PeerState),
+			Config: &api.Config{
+				Notifications: api.NotificationConfig{
+					Enabled:          config.Notifications.Enabled,
+					RateLimitMinutes: config.Notifications.RateLimitMinutes,
+					Email: api.EmailConfig{
+						Enabled:    config.Notifications.Email.Enabled,
+						SMTPHost:   config.Notifications.Email.SMTPHost,
+						SMTPPort:   config.Notifications.Email.SMTPPort,
+						Username:   config.Notifications.Email.Username,
+						Password:   config.Notifications.Email.Password,
+						From:       config.Notifications.Email.From,
+						To:         config.Notifications.Email.To,
+						EventTypes: config.Notifications.Email.Events,
+					},
+					Slack: api.SlackConfig{
+						Enabled:    config.Notifications.Slack.Enabled,
+						WebhookURL: config.Notifications.Slack.WebhookURL,
+						Channel:    config.Notifications.Slack.Channel,
+						EventTypes: config.Notifications.Slack.Events,
+					},
+					Telegram: api.TelegramConfig{
+						Enabled:    config.Notifications.Telegram.Enabled,
+						BotToken:   config.Notifications.Telegram.BotToken,
+						ChatID:     config.Notifications.Telegram.ChatID,
+						EventTypes: config.Notifications.Telegram.Events,
+					},
+				},
+			},
+			Notifier:   notifier,
+			ConfigPath: *configFile,
 		}
 
 		// Convert peer states
