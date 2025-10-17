@@ -1,0 +1,29 @@
+.events-page {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.events-header {
+  background: #fff;
+  border-radius: 8px;
+  padding: 30px;
+  margin-bottom: 30px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.events-header h1 {
+  margin: 0 0 10px 0;
+  font-size: 2em;
+  color: #333;
+}
+
+.events-header p {
+  margin: 0;
+  color: #666;
+  font-size: 1em;
+}
+
+.events-container {
+  /* EventLog component handles its own styling */
+}

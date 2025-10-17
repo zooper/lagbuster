@@ -5,6 +5,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"lagbuster/api"
+	"lagbuster/database"
+	"lagbuster/notifications"
 	"log"
 	"os"
 	"os/exec"
@@ -20,14 +23,17 @@ import (
 
 // Configuration structures
 type Config struct {
-	Peers      []PeerConfig    `yaml:"peers"`
-	Thresholds ThresholdConfig `yaml:"thresholds"`
-	Damping    DampingConfig   `yaml:"damping"`
-	Startup    StartupConfig   `yaml:"startup"`
-	Failback   FailbackConfig  `yaml:"failback"`
-	Bird       BirdConfig      `yaml:"bird"`
-	Logging    LoggingConfig   `yaml:"logging"`
-	Mode       ModeConfig      `yaml:"mode"`
+	Peers         []PeerConfig              `yaml:"peers"`
+	Thresholds    ThresholdConfig           `yaml:"thresholds"`
+	Damping       DampingConfig             `yaml:"damping"`
+	Startup       StartupConfig             `yaml:"startup"`
+	Failback      FailbackConfig            `yaml:"failback"`
+	Bird          BirdConfig                `yaml:"bird"`
+	Logging       LoggingConfig             `yaml:"logging"`
+	Mode          ModeConfig                `yaml:"mode"`
+	API           APIConfig                 `yaml:"api"`
+	Database      DatabaseConfig            `yaml:"database"`
+	Notifications notifications.MainConfig  `yaml:"notifications"`
 }
 
 type PeerConfig struct {
@@ -79,6 +85,16 @@ type ModeConfig struct {
 	DryRun bool `yaml:"dry_run"`
 }
 
+type APIConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	ListenAddress string `yaml:"listen_address"`
+}
+
+type DatabaseConfig struct {
+	Path          string `yaml:"path"`
+	RetentionDays int    `yaml:"retention_days"`
+}
+
 // Runtime state structures
 type PeerState struct {
 	Config                    PeerConfig
@@ -96,6 +112,9 @@ type AppState struct {
 	CurrentPrimary string
 	LastSwitchTime time.Time
 	StartTime      time.Time
+	db             *database.DB
+	notifier       *notifications.Notifier
+	apiServer      *api.Server
 }
 
 // Logger wrapper for structured logging
@@ -156,8 +175,88 @@ func main() {
 		logger.Info("Running in DRY-RUN mode - no changes will be applied")
 	}
 
+	// Initialize database if configured
+	var db *database.DB
+	if config.Database.Path != "" {
+		db, err = database.Open(config.Database.Path)
+		if err != nil {
+			log.Fatalf("Failed to open database: %v", err)
+		}
+		defer db.Close()
+		logger.Info("Database initialized: %s", config.Database.Path)
+
+		// Start cleanup goroutine if retention is configured
+		if config.Database.RetentionDays > 0 {
+			go func() {
+				for {
+					time.Sleep(24 * time.Hour)
+					if err := db.CleanupOldData(config.Database.RetentionDays); err != nil {
+						logger.Error("Database cleanup failed: %v", err)
+					} else {
+						logger.Debug("Database cleanup completed (retention: %d days)", config.Database.RetentionDays)
+					}
+				}
+			}()
+		}
+	}
+
+	// Initialize notifications if configured
+	var notifier *notifications.Notifier
+	if config.Notifications.Enabled {
+		channels := buildNotificationChannels(config.Notifications, logger)
+		notifier = notifications.NewNotifier(channels, config.Notifications.RateLimitMinutes, logger)
+		logger.Info("Notifications initialized with %d channels", len(channels))
+
+		// Send startup notification
+		notifier.Notify(notifications.Event{
+			Type:      notifications.EventStartup,
+			Timestamp: time.Now(),
+		})
+	}
+
 	// Initialize application state
 	state := initializeState(config)
+	state.db = db
+	state.notifier = notifier
+
+	// Initialize API server if configured
+	var apiServer *api.Server
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if config.API.Enabled {
+		// Create API state wrapper from AppState
+		apiState := &api.AppState{
+			CurrentPrimary: state.CurrentPrimary,
+			LastSwitchTime: state.LastSwitchTime,
+			StartTime:      state.StartTime,
+			Peers:          make(map[string]*api.PeerState),
+		}
+
+		// Convert peer states
+		for name, peer := range state.Peers {
+			apiState.Peers[name] = &api.PeerState{
+				Name:                      peer.Config.Name,
+				Hostname:                  peer.Config.Hostname,
+				Baseline:                  peer.Config.ExpectedBaseline,
+				CurrentLatency:            peer.CurrentLatency,
+				IsHealthy:                 peer.IsHealthy,
+				IsPrimary:                 peer.IsPrimary,
+				ConsecutiveHealthyCount:   peer.ConsecutiveHealthyCount,
+				ConsecutiveUnhealthyCount: peer.ConsecutiveUnhealthyCount,
+			}
+		}
+
+		apiServer = api.NewServer(apiState, db, logger)
+		state.apiServer = apiServer
+
+		go func() {
+			logger.Info("Starting API server on %s", config.API.ListenAddress)
+			if err := apiServer.Start(ctx, config.API.ListenAddress); err != nil {
+				logger.Error("API server error: %v", err)
+			}
+		}()
+	}
 
 	// Startup grace period
 	logger.Info("Startup grace period: %d seconds", config.Startup.GracePeriod)
@@ -250,6 +349,13 @@ func runMonitoringCycle(state *AppState) {
 			logger.Debug("Peer %s: latency=%.2fms, baseline=%.2fms",
 				peer.Config.Name, latency, peer.Config.ExpectedBaseline)
 		}
+
+		// Record measurement to database
+		if state.db != nil {
+			if err := state.db.RecordMeasurement(peer.Config.Name, latency, peer.IsHealthy, peer.IsPrimary); err != nil {
+				logger.Error("Failed to record measurement for %s: %v", peer.Config.Name, err)
+			}
+		}
 	}
 
 	// Evaluate health of all peers
@@ -262,6 +368,9 @@ func runMonitoringCycle(state *AppState) {
 	if newPrimary != state.CurrentPrimary {
 		switchPrimary(state, newPrimary)
 	}
+
+	// Update API server state
+	updateAPIServerState(state)
 }
 
 // Ping a host and return latency in milliseconds
@@ -332,22 +441,61 @@ func evaluatePeerHealth(state *AppState) {
 			peer.ConsecutiveHealthyCount++
 		}
 
-		// Log health transitions
-		if wasHealthy && !peer.IsHealthy {
-			if latency < 0 {
-				logger.Info("Peer %s became UNHEALTHY: unreachable/timeout, baseline=%.2fms",
-					name, baseline)
-			} else if latency > state.Config.Thresholds.AbsoluteMaxLatency {
-				logger.Info("Peer %s became UNHEALTHY: latency=%.2fms exceeds absolute max (%.2fms), baseline=%.2fms",
-					name, latency, state.Config.Thresholds.AbsoluteMaxLatency, baseline)
+		// Handle health transitions
+		if wasHealthy != peer.IsHealthy {
+			// Determine reason for health change
+			var reason string
+			if !peer.IsHealthy {
+				if latency < 0 {
+					reason = "unreachable/timeout"
+					logger.Info("Peer %s became UNHEALTHY: unreachable/timeout, baseline=%.2fms",
+						name, baseline)
+				} else if latency > state.Config.Thresholds.AbsoluteMaxLatency {
+					reason = fmt.Sprintf("latency %.2fms exceeds absolute max %.2fms", latency, state.Config.Thresholds.AbsoluteMaxLatency)
+					logger.Info("Peer %s became UNHEALTHY: latency=%.2fms exceeds absolute max (%.2fms), baseline=%.2fms",
+						name, latency, state.Config.Thresholds.AbsoluteMaxLatency, baseline)
+				} else {
+					degradation := latency - baseline
+					reason = fmt.Sprintf("degradation %.2fms above baseline", degradation)
+					logger.Info("Peer %s became UNHEALTHY: latency=%.2fms, baseline=%.2fms, degradation=%.2fms",
+						name, latency, baseline, degradation)
+				}
 			} else {
-				degradation := latency - baseline
-				logger.Info("Peer %s became UNHEALTHY: latency=%.2fms, baseline=%.2fms, degradation=%.2fms",
-					name, latency, baseline, degradation)
+				reason = "latency returned to acceptable levels"
+				logger.Info("Peer %s became HEALTHY: latency=%.2fms, baseline=%.2fms",
+					name, latency, baseline)
 			}
-		} else if !wasHealthy && peer.IsHealthy {
-			logger.Info("Peer %s became HEALTHY: latency=%.2fms, baseline=%.2fms",
-				name, latency, baseline)
+
+			// Record health change event to database
+			if state.db != nil {
+				if _, err := state.db.RecordEvent("health_change", &name, nil, nil, &wasHealthy, &peer.IsHealthy, reason, nil); err != nil {
+					logger.Error("Failed to record health change event for %s: %v", name, err)
+				}
+			}
+
+			// Send notifications for significant health changes
+			if state.notifier != nil {
+				if !peer.IsHealthy {
+					// Became unhealthy
+					state.notifier.Notify(notifications.Event{
+						Type:      notifications.EventUnhealthy,
+						PeerName:  name,
+						Latency:   latency,
+						Baseline:  baseline,
+						Reason:    reason,
+						Timestamp: time.Now(),
+					})
+				} else {
+					// Recovered to healthy
+					state.notifier.Notify(notifications.Event{
+						Type:      notifications.EventRecovery,
+						PeerName:  name,
+						Latency:   latency,
+						Baseline:  baseline,
+						Timestamp: time.Now(),
+					})
+				}
+			}
 		}
 	}
 }
@@ -496,6 +644,7 @@ func switchPrimary(state *AppState, newPrimary string) {
 	newPeer := state.Peers[newPrimary]
 
 	reason := buildSwitchReason(oldPeer, newPeer, state.Config.Thresholds)
+	isFailback := oldPeer.IsHealthy && strings.Contains(reason, "failback")
 
 	if state.Config.Logging.LogDecisions {
 		logger.Info("SWITCHING PRIMARY: %s -> %s | Reason: %s",
@@ -510,11 +659,47 @@ func switchPrimary(state *AppState, newPrimary string) {
 	oldPeer.IsPrimary = false
 	newPeer.IsPrimary = true
 	state.CurrentPrimary = newPrimary
-	state.LastSwitchTime = time.Now()
+	switchTime := time.Now()
+	state.LastSwitchTime = switchTime
 
 	// Reset consecutive counters for new primary
 	newPeer.ConsecutiveUnhealthyCount = 0
 	newPeer.ConsecutiveHealthyCount = 0
+
+	// Record switch event to database
+	if state.db != nil {
+		eventType := "switch"
+		if isFailback {
+			eventType = "failback"
+		}
+		if _, err := state.db.RecordEvent(eventType, nil, &oldPrimary, &newPrimary, nil, nil, reason, nil); err != nil {
+			logger.Error("Failed to record switch event: %v", err)
+		}
+	}
+
+	// Send notification for switch
+	if state.notifier != nil {
+		eventType := notifications.EventSwitch
+		if isFailback {
+			eventType = notifications.EventFailback
+		}
+		state.notifier.Notify(notifications.Event{
+			Type:       eventType,
+			OldPrimary: oldPrimary,
+			NewPrimary: newPrimary,
+			Reason:     reason,
+			Timestamp:  switchTime,
+		})
+	}
+
+	// Broadcast event via WebSocket
+	if state.apiServer != nil {
+		eventTypeStr := "switch"
+		if isFailback {
+			eventTypeStr = "failback"
+		}
+		state.apiServer.BroadcastEvent(eventTypeStr, newPrimary, reason)
+	}
 
 	// Apply changes to Bird
 	if !state.Config.Mode.DryRun {
@@ -669,4 +854,80 @@ func generateBirdConfig(state *AppState, priorities map[string]int) string {
 	}
 
 	return sb.String()
+}
+// buildNotificationChannels creates notification channels based on configuration
+func buildNotificationChannels(config notifications.MainConfig, logger *Logger) []notifications.Channel {
+	var channels []notifications.Channel
+
+	// Email channel
+	if config.Email.Enabled {
+		emailChan := notifications.NewEmailChannel(notifications.EmailConfig{
+			Enabled:  config.Email.Enabled,
+			SMTPHost: config.Email.SMTPHost,
+			SMTPPort: config.Email.SMTPPort,
+			Username: config.Email.Username,
+			Password: config.Email.Password,
+			From:     config.Email.From,
+			To:       config.Email.To,
+			Events:   config.Email.Events,
+		})
+		channels = append(channels, emailChan)
+		logger.Info("Email notifications enabled (to: %v)", config.Email.To)
+	}
+
+	// Slack channel
+	if config.Slack.Enabled {
+		slackChan := notifications.NewSlackChannel(notifications.SlackConfig{
+			Enabled:    config.Slack.Enabled,
+			WebhookURL: config.Slack.WebhookURL,
+			Events:     config.Slack.Events,
+		})
+		channels = append(channels, slackChan)
+		logger.Info("Slack notifications enabled")
+	}
+
+	// Telegram channel
+	if config.Telegram.Enabled {
+		telegramChan := notifications.NewTelegramChannel(notifications.TelegramConfig{
+			Enabled:  config.Telegram.Enabled,
+			BotToken: config.Telegram.BotToken,
+			ChatID:   config.Telegram.ChatID,
+			Events:   config.Telegram.Events,
+		})
+		channels = append(channels, telegramChan)
+		logger.Info("Telegram notifications enabled (chat: %s)", config.Telegram.ChatID)
+	}
+
+	return channels
+}
+
+// updateAPIServerState synchronizes AppState to API server state
+func updateAPIServerState(state *AppState) {
+	if state.apiServer == nil {
+		return
+	}
+
+	apiState := &api.AppState{
+		CurrentPrimary: state.CurrentPrimary,
+		LastSwitchTime: state.LastSwitchTime,
+		StartTime:      state.StartTime,
+		Peers:          make(map[string]*api.PeerState),
+	}
+
+	for name, peer := range state.Peers {
+		apiState.Peers[name] = &api.PeerState{
+			Name:                      peer.Config.Name,
+			Hostname:                  peer.Config.Hostname,
+			Baseline:                  peer.Config.ExpectedBaseline,
+			CurrentLatency:            peer.CurrentLatency,
+			IsHealthy:                 peer.IsHealthy,
+			IsPrimary:                 peer.IsPrimary,
+			ConsecutiveHealthyCount:   peer.ConsecutiveHealthyCount,
+			ConsecutiveUnhealthyCount: peer.ConsecutiveUnhealthyCount,
+		}
+	}
+
+	// Update API server's state pointer atomically
+	// (Note: In production, this would use proper state synchronization)
+	*state.apiServer = *api.NewServer(apiState, state.db, logger)
 }

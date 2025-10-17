@@ -5,19 +5,33 @@ lagbuster
 *.so
 *.dylib
 
-# Test binary
+# Test binary, built with `go test -c`
 *.test
 
 # Output of the go coverage tool
 *.out
-*.coverage
 
-# Go workspace file
-go.work
-go.work.sum
+# Node.js dependencies
+webui/backend/node_modules/
+webui/frontend/node_modules/
 
-# Dependency directories
-vendor/
+# React build output
+webui/frontend/build/
+
+# Environment files
+.env
+.env.local
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Log files
+*.log
+
+# macOS
+.DS_Store
 
 # IDE
 .vscode/
@@ -25,32 +39,6 @@ vendor/
 *.swp
 *.swo
 *~
-.project
-.classpath
-.settings/
 
-# OS
-.DS_Store
-Thumbs.db
-*.bak
-*.tmp
-
-# Runtime files
-*.log
-*.pid
-
-# Local config (use config.example.yaml as template)
-config.yaml
-config.local.yaml
-config.production.yaml
-config.*.yaml
-!config.example.yaml
-
-# Temporary files
-/tmp/
-*.tar.gz
-*.zip
-
-# Build artifacts
-dist/
-build/
+# Test configs
+config-local-test.yaml

@@ -99,3 +99,67 @@ logging:
 mode:
   # Set to true to log decisions without actually applying changes
   dry_run: false
+
+# Web API and monitoring
+api:
+  # Enable HTTP API and WebSocket for real-time monitoring
+  enabled: true
+
+  # Address and port to listen on
+  listen_address: "0.0.0.0:8080"
+
+# Database for historical metrics and events
+database:
+  # Path to SQLite database file (leave empty to disable)
+  path: "/var/lib/lagbuster/lagbuster.db"
+
+  # Days to retain historical data (0 = keep forever)
+  retention_days: 30
+
+# Notifications
+notifications:
+  # Enable notification system
+  enabled: true
+
+  # Rate limit: minimum minutes between notifications of same type to same channel
+  rate_limit_minutes: 5
+
+  # Email notifications via SMTP
+  email:
+    enabled: false
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+    username: "your-email@gmail.com"
+    password: "your-app-password"  # Use app-specific password for Gmail
+    from: "lagbuster@example.com"
+    to:
+      - "ops@example.com"
+      - "oncall@example.com"
+    # Event types to notify about
+    events:
+      - "switch"
+      - "failback"
+      - "unhealthy"
+
+  # Slack notifications via webhook
+  slack:
+    enabled: false
+    webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+    events:
+      - "switch"
+      - "failback"
+      - "unhealthy"
+      - "recovery"
+
+  # Telegram notifications via bot
+  telegram:
+    enabled: false
+    bot_token: "YOUR_BOT_TOKEN"
+    chat_id: "YOUR_CHAT_ID"
+    events:
+      - "switch"
+      - "failback"
+      - "unhealthy"
+      - "recovery"
+      - "startup"
+      - "shutdown"
