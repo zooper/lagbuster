@@ -10,9 +10,9 @@ import (
 
 // SlackConfig holds Slack notification configuration
 type SlackConfig struct {
-	Enabled    bool
-	WebhookURL string
-	Events     []EventType
+	Enabled    bool        `yaml:"enabled"`
+	WebhookURL string      `yaml:"webhook_url"`
+	Events     []EventType `yaml:"events"`
 }
 
 // SlackChannel implements Slack notifications

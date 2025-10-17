@@ -8,14 +8,14 @@ import (
 
 // EmailConfig holds email notification configuration
 type EmailConfig struct {
-	Enabled   bool
-	SMTPHost  string
-	SMTPPort  int
-	Username  string
-	Password  string
-	From      string
-	To        []string
-	Events    []EventType
+	Enabled   bool        `yaml:"enabled"`
+	SMTPHost  string      `yaml:"smtp_host"`
+	SMTPPort  int         `yaml:"smtp_port"`
+	Username  string      `yaml:"username"`
+	Password  string      `yaml:"password"`
+	From      string      `yaml:"from"`
+	To        []string    `yaml:"to"`
+	Events    []EventType `yaml:"events"`
 }
 
 // EmailChannel implements email notifications

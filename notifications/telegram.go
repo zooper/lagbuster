@@ -10,10 +10,10 @@ import (
 
 // TelegramConfig holds Telegram notification configuration
 type TelegramConfig struct {
-	Enabled  bool
-	BotToken string
-	ChatID   string
-	Events   []EventType
+	Enabled  bool        `yaml:"enabled"`
+	BotToken string      `yaml:"bot_token"`
+	ChatID   string      `yaml:"chat_id"`
+	Events   []EventType `yaml:"events"`
 }
 
 // TelegramChannel implements Telegram notifications
@@ -66,6 +66,12 @@ func (t *TelegramChannel) Send(event Event) error {
 	}
 
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.config.BotToken)
+
+	// Debug logging
+	if len(t.config.BotToken) < 10 {
+		return fmt.Errorf("bot token appears invalid (length: %d)", len(t.config.BotToken))
+	}
+
 	resp, err := t.client.Post(url, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("posting to telegram: %w", err)
@@ -76,7 +82,8 @@ func (t *TelegramChannel) Send(event Event) error {
 		// Read response body for debugging
 		var responseBody bytes.Buffer
 		responseBody.ReadFrom(resp.Body)
-		return fmt.Errorf("telegram returned status %d: %s", resp.StatusCode, responseBody.String())
+		return fmt.Errorf("telegram returned status %d: %s (bot_token len: %d, chat_id: %s)",
+			resp.StatusCode, responseBody.String(), len(t.config.BotToken), t.config.ChatID)
 	}
 
 	return nil
