@@ -3,13 +3,16 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"lagbuster/database"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"gopkg.in/yaml.v3"
 )
 
 // Config represents the application configuration (subset needed for API)
@@ -223,10 +226,44 @@ func readJSON(r *http.Request, v interface{}) error {
 
 // saveConfig saves the current config to disk
 func (s *Server) saveConfig() error {
-	// This will be implemented to save the config back to YAML
-	// For now, we'll skip actual file writing since it requires full config struct
-	// The config changes are in memory and will persist until restart
-	s.logger.Info("Notification settings updated (changes will persist until restart)")
+	if s.state.ConfigPath == "" {
+		s.logger.Warn("No config path available - settings will not persist")
+		return fmt.Errorf("config path not set")
+	}
+
+	// Read the full config file as a map to preserve all sections
+	data, err := os.ReadFile(s.state.ConfigPath)
+	if err != nil {
+		return fmt.Errorf("reading config file: %w", err)
+	}
+
+	var fullConfig map[string]interface{}
+	if err := yaml.Unmarshal(data, &fullConfig); err != nil {
+		return fmt.Errorf("parsing config file: %w", err)
+	}
+
+	// Update just the notifications section
+	s.state.mu.RLock()
+	fullConfig["notifications"] = s.state.Config.Notifications
+	s.state.mu.RUnlock()
+
+	// Write back to file
+	updatedData, err := yaml.Marshal(fullConfig)
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
+
+	// Write to temp file first, then rename for atomic update
+	tempPath := s.state.ConfigPath + ".tmp"
+	if err := os.WriteFile(tempPath, updatedData, 0644); err != nil {
+		return fmt.Errorf("writing temp config: %w", err)
+	}
+
+	if err := os.Rename(tempPath, s.state.ConfigPath); err != nil {
+		return fmt.Errorf("renaming temp config: %w", err)
+	}
+
+	s.logger.Info("Notification settings saved to %s", s.state.ConfigPath)
 	return nil
 }
 

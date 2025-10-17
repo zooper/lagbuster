@@ -364,14 +364,15 @@ func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Check if notifier is available
-	if s.state.Notifier == nil {
-		writeError(w, "notifications not configured", http.StatusServiceUnavailable)
-		return
-	}
-
 	// Cast interface to actual Notifier type and send test
 	s.logger.Info("Sending test notification for channel: %s", req.Channel)
+
+	// Check if notifier is available
+	if s.state.Notifier == nil {
+		s.logger.Warn("Notifications are not enabled - cannot send test")
+		writeError(w, "notifications are not enabled in configuration", http.StatusBadRequest)
+		return
+	}
 
 	// Type assertion to access SendTest method
 	type testSender interface {
