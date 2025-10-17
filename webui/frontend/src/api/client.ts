@@ -94,3 +94,51 @@ export function formatTimestamp(timestamp: string): string {
   const date = new Date(timestamp);
   return date.toLocaleString();
 }
+
+export interface NotificationSettings {
+  enabled: boolean;
+  rate_limit_minutes: number;
+  email: {
+    enabled: boolean;
+    smtp_host: string;
+    smtp_port: number;
+    from: string;
+    to: string[];
+    event_types: string[];
+  };
+  slack: {
+    enabled: boolean;
+    webhook_url: string;
+    channel: string;
+    event_types: string[];
+  };
+  telegram: {
+    enabled: boolean;
+    bot_token: string;
+    chat_id: string;
+    event_types: string[];
+  };
+}
+
+export async function getNotificationSettings(): Promise<NotificationSettings> {
+  const res = await fetch(`${API_BASE}/api/settings/notifications`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch notification settings: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function updateNotificationSettings(
+  settings: NotificationSettings
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/settings/notifications`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update notification settings: ${res.statusText}`);
+  }
+}

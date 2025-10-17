@@ -218,3 +218,123 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		"events": eventResponses,
 	})
 }
+
+// NotificationSettingsResponse represents notification configuration
+type NotificationSettingsResponse struct {
+	Enabled          bool                    `json:"enabled"`
+	RateLimitMinutes int                     `json:"rate_limit_minutes"`
+	Email            EmailSettingsResponse   `json:"email"`
+	Slack            SlackSettingsResponse   `json:"slack"`
+	Telegram         TelegramSettingsResponse `json:"telegram"`
+}
+
+type EmailSettingsResponse struct {
+	Enabled    bool     `json:"enabled"`
+	SMTPHost   string   `json:"smtp_host"`
+	SMTPPort   int      `json:"smtp_port"`
+	From       string   `json:"from"`
+	To         []string `json:"to"`
+	EventTypes []string `json:"event_types"`
+}
+
+type SlackSettingsResponse struct {
+	Enabled    bool     `json:"enabled"`
+	WebhookURL string   `json:"webhook_url"`
+	Channel    string   `json:"channel"`
+	EventTypes []string `json:"event_types"`
+}
+
+type TelegramSettingsResponse struct {
+	Enabled    bool     `json:"enabled"`
+	BotToken   string   `json:"bot_token"`
+	ChatID     string   `json:"chat_id"`
+	EventTypes []string `json:"event_types"`
+}
+
+// handleGetNotificationSettings returns current notification settings
+func (s *Server) handleGetNotificationSettings(w http.ResponseWriter, r *http.Request) {
+	s.state.mu.RLock()
+	defer s.state.mu.RUnlock()
+
+	// Build response from config
+	resp := NotificationSettingsResponse{
+		Enabled:          s.state.Config.Notifications.Enabled,
+		RateLimitMinutes: s.state.Config.Notifications.RateLimitMinutes,
+		Email: EmailSettingsResponse{
+			Enabled:    s.state.Config.Notifications.Email.Enabled,
+			SMTPHost:   s.state.Config.Notifications.Email.SMTPHost,
+			SMTPPort:   s.state.Config.Notifications.Email.SMTPPort,
+			From:       s.state.Config.Notifications.Email.From,
+			To:         s.state.Config.Notifications.Email.To,
+			EventTypes: s.state.Config.Notifications.Email.EventTypes,
+		},
+		Slack: SlackSettingsResponse{
+			Enabled:    s.state.Config.Notifications.Slack.Enabled,
+			WebhookURL: s.state.Config.Notifications.Slack.WebhookURL,
+			Channel:    s.state.Config.Notifications.Slack.Channel,
+			EventTypes: s.state.Config.Notifications.Slack.EventTypes,
+		},
+		Telegram: TelegramSettingsResponse{
+			Enabled:    s.state.Config.Notifications.Telegram.Enabled,
+			BotToken:   s.state.Config.Notifications.Telegram.BotToken,
+			ChatID:     s.state.Config.Notifications.Telegram.ChatID,
+			EventTypes: s.state.Config.Notifications.Telegram.EventTypes,
+		},
+	}
+
+	writeJSON(w, resp)
+}
+
+// handleUpdateNotificationSettings updates notification settings
+func (s *Server) handleUpdateNotificationSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut && r.Method != http.MethodPost {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req NotificationSettingsResponse
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Update config
+	s.state.mu.Lock()
+	s.state.Config.Notifications.Enabled = req.Enabled
+	s.state.Config.Notifications.RateLimitMinutes = req.RateLimitMinutes
+
+	s.state.Config.Notifications.Email.Enabled = req.Email.Enabled
+	s.state.Config.Notifications.Email.SMTPHost = req.Email.SMTPHost
+	s.state.Config.Notifications.Email.SMTPPort = req.Email.SMTPPort
+	s.state.Config.Notifications.Email.From = req.Email.From
+	s.state.Config.Notifications.Email.To = req.Email.To
+	s.state.Config.Notifications.Email.EventTypes = req.Email.EventTypes
+
+	s.state.Config.Notifications.Slack.Enabled = req.Slack.Enabled
+	s.state.Config.Notifications.Slack.WebhookURL = req.Slack.WebhookURL
+	s.state.Config.Notifications.Slack.Channel = req.Slack.Channel
+	s.state.Config.Notifications.Slack.EventTypes = req.Slack.EventTypes
+
+	s.state.Config.Notifications.Telegram.Enabled = req.Telegram.Enabled
+	s.state.Config.Notifications.Telegram.BotToken = req.Telegram.BotToken
+	s.state.Config.Notifications.Telegram.ChatID = req.Telegram.ChatID
+	s.state.Config.Notifications.Telegram.EventTypes = req.Telegram.EventTypes
+	s.state.mu.Unlock()
+
+	// Rebuild notification channels with new settings
+	if s.state.Notifier != nil {
+		s.rebuildNotificationChannels()
+	}
+
+	// Save config to disk
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("Failed to save config: %v", err)
+		writeError(w, "failed to save settings", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"success": true,
+		"message": "notification settings updated",
+	})
+}

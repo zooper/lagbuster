@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, NavLink } from 'react-router-do
 import { Dashboard } from './pages/Dashboard';
 import { Metrics } from './pages/Metrics';
 import { Events } from './pages/Events';
+import { Settings } from './pages/Settings';
 import './App.css';
 
 function App() {
@@ -27,6 +28,9 @@ function App() {
               <li>
                 <NavLink to="/events">Events</NavLink>
               </li>
+              <li>
+                <NavLink to="/settings">Settings</NavLink>
+              </li>
             </ul>
           </div>
         </nav>
@@ -36,6 +40,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/metrics" element={<Metrics />} />
             <Route path="/events" element={<Events />} />
+            <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>
       </div>

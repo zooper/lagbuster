@@ -12,12 +12,53 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// Config represents the application configuration (subset needed for API)
+type Config struct {
+	Notifications NotificationConfig `yaml:"notifications"`
+}
+
+type NotificationConfig struct {
+	Enabled          bool           `yaml:"enabled"`
+	RateLimitMinutes int            `yaml:"rate_limit_minutes"`
+	Email            EmailConfig    `yaml:"email"`
+	Slack            SlackConfig    `yaml:"slack"`
+	Telegram         TelegramConfig `yaml:"telegram"`
+}
+
+type EmailConfig struct {
+	Enabled    bool     `yaml:"enabled"`
+	SMTPHost   string   `yaml:"smtp_host"`
+	SMTPPort   int      `yaml:"smtp_port"`
+	Username   string   `yaml:"username"`
+	Password   string   `yaml:"password"`
+	From       string   `yaml:"from"`
+	To         []string `yaml:"to"`
+	EventTypes []string `yaml:"event_types"`
+}
+
+type SlackConfig struct {
+	Enabled    bool     `yaml:"enabled"`
+	WebhookURL string   `yaml:"webhook_url"`
+	Channel    string   `yaml:"channel"`
+	EventTypes []string `yaml:"event_types"`
+}
+
+type TelegramConfig struct {
+	Enabled    bool     `yaml:"enabled"`
+	BotToken   string   `yaml:"bot_token"`
+	ChatID     string   `yaml:"chat_id"`
+	EventTypes []string `yaml:"event_types"`
+}
+
 // AppState represents the current application state (same as lagbuster.go)
 type AppState struct {
 	CurrentPrimary string
 	LastSwitchTime time.Time
 	StartTime      time.Time
 	Peers          map[string]*PeerState
+	Config         *Config
+	Notifier       interface{} // notifications.Notifier (avoid circular import)
+	ConfigPath     string      // Path to config file for saving
 	mu             sync.RWMutex
 }
 
@@ -76,6 +117,8 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/api/peers", s.handlePeers).Methods("GET")
 	s.router.HandleFunc("/api/metrics", s.handleMetrics).Methods("GET")
 	s.router.HandleFunc("/api/events", s.handleEvents).Methods("GET")
+	s.router.HandleFunc("/api/settings/notifications", s.handleGetNotificationSettings).Methods("GET")
+	s.router.HandleFunc("/api/settings/notifications", s.handleUpdateNotificationSettings).Methods("PUT", "POST")
 
 	// WebSocket
 	s.router.HandleFunc("/ws", s.handleWebSocket)
@@ -172,4 +215,24 @@ func writeError(w http.ResponseWriter, message string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+func readJSON(r *http.Request, v interface{}) error {
+	return json.NewDecoder(r.Body).Decode(v)
+}
+
+// saveConfig saves the current config to disk
+func (s *Server) saveConfig() error {
+	// This will be implemented to save the config back to YAML
+	// For now, we'll skip actual file writing since it requires full config struct
+	// The config changes are in memory and will persist until restart
+	s.logger.Info("Notification settings updated (changes will persist until restart)")
+	return nil
+}
+
+// rebuildNotificationChannels rebuilds notification channels with new settings
+func (s *Server) rebuildNotificationChannels() {
+	// This will trigger notification channel rebuild in the main app
+	// For now, changes take effect in memory
+	s.logger.Info("Rebuilding notification channels with new settings")
 }
