@@ -1,0 +1,82 @@
+# Lagbuster Configuration
+# Per-peer health monitoring with static baselines
+
+# Edge router peers to monitor
+peers:
+  - name: nyc01
+    hostname: router-nyc01.linuxburken.se
+    expected_baseline: 3.0 # milliseconds - your expected "good" latency
+    bird_variable: jc01_nyc01_lagbuster_priority
+
+  - name: nyc02
+    hostname: router-nyc02.linuxburken.se
+    expected_baseline: 4.0 # milliseconds
+    bird_variable: jc01_nyc02_lagbuster_priority
+
+  - name: ash01
+    hostname: router-ash01.linuxburken.se
+    expected_baseline: 10.0 # milliseconds
+    bird_variable: jc01_ash01_lagbuster_priority
+
+# Health check thresholds
+thresholds:
+  # Switch away from current primary if it degrades by this much from its baseline
+  degradation_threshold: 20.0 # milliseconds
+
+  # Stay on current primary if within this comfort zone above baseline
+  comfort_threshold: 10.0 # milliseconds
+
+  # Hard limit - any peer exceeding this is considered unhealthy regardless of baseline
+  absolute_max_latency: 150.0 # milliseconds
+
+  # Treat ping timeout as this value for comparison
+  timeout_latency: 3000.0 # milliseconds
+
+# Damping settings to prevent route flapping
+damping:
+  # Require this many consecutive unhealthy measurements before switching away from current primary
+  consecutive_unhealthy_count: 3
+
+  # How often to measure latency
+  measurement_interval: 10 # seconds
+
+  # Minimum time between switches (cooldown period)
+  cooldown_period: 180 # seconds (3 minutes)
+
+  # Size of rolling window for tracking measurements per peer
+  measurement_window: 20 # number of measurements to keep
+
+# Startup behavior
+startup:
+  # Wait this long before making first priority change (allows baselines to stabilize)
+  grace_period: 60 # seconds
+
+  # Initial primary peer (by name) - will be used until grace period expires
+  initial_primary: nyc01
+
+# Bird integration
+bird:
+  # Path to lagbuster-managed priorities file
+  priorities_file: /etc/bird/lagbuster-priorities.conf
+
+  # Path to birdc binary
+  birdc_path: /usr/sbin/birdc
+
+  # Timeout for birdc commands
+  birdc_timeout: 5 # seconds
+
+# Logging
+logging:
+  # Log level: debug, info, warn, error
+  level: info
+
+  # Log all latency measurements (can be verbose)
+  log_measurements: false
+
+  # Log decision rationale
+  log_decisions: true
+
+# Operational mode
+mode:
+  # Set to true to log decisions without actually applying changes
+  dry_run: false

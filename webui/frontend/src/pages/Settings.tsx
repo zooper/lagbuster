@@ -16,7 +16,6 @@ interface NotificationSettings {
   slack: {
     enabled: boolean;
     webhook_url: string;
-    channel: string;
     event_types: string[];
   };
   telegram: {
@@ -283,21 +282,6 @@ export function Settings() {
                     slack: { ...settings.slack, webhook_url: e.target.value }
                   })}
                   placeholder="https://hooks.slack.com/services/..."
-                />
-              </label>
-            </div>
-
-            <div className="form-group">
-              <label>
-                Channel (optional)
-                <input
-                  type="text"
-                  value={settings.slack.channel}
-                  onChange={(e) => setSettings({
-                    ...settings,
-                    slack: { ...settings.slack, channel: e.target.value }
-                  })}
-                  placeholder="#alerts"
                 />
               </label>
             </div>

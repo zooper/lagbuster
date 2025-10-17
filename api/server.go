@@ -39,7 +39,6 @@ type EmailConfig struct {
 type SlackConfig struct {
 	Enabled    bool     `yaml:"enabled"`
 	WebhookURL string   `yaml:"webhook_url"`
-	Channel    string   `yaml:"channel"`
 	EventTypes []string `yaml:"event_types"`
 }
 

@@ -225,6 +225,20 @@ func main() {
 	defer cancel()
 
 	if config.API.Enabled {
+		// Convert notification event types from EventType to string
+		emailEvents := make([]string, len(config.Notifications.Email.Events))
+		for i, e := range config.Notifications.Email.Events {
+			emailEvents[i] = string(e)
+		}
+		slackEvents := make([]string, len(config.Notifications.Slack.Events))
+		for i, e := range config.Notifications.Slack.Events {
+			slackEvents[i] = string(e)
+		}
+		telegramEvents := make([]string, len(config.Notifications.Telegram.Events))
+		for i, e := range config.Notifications.Telegram.Events {
+			telegramEvents[i] = string(e)
+		}
+
 		// Create API state wrapper from AppState
 		apiState := &api.AppState{
 			CurrentPrimary: state.CurrentPrimary,
@@ -243,19 +257,18 @@ func main() {
 						Password:   config.Notifications.Email.Password,
 						From:       config.Notifications.Email.From,
 						To:         config.Notifications.Email.To,
-						EventTypes: config.Notifications.Email.Events,
+						EventTypes: emailEvents,
 					},
 					Slack: api.SlackConfig{
 						Enabled:    config.Notifications.Slack.Enabled,
 						WebhookURL: config.Notifications.Slack.WebhookURL,
-						Channel:    config.Notifications.Slack.Channel,
-						EventTypes: config.Notifications.Slack.Events,
+						EventTypes: slackEvents,
 					},
 					Telegram: api.TelegramConfig{
 						Enabled:    config.Notifications.Telegram.Enabled,
 						BotToken:   config.Notifications.Telegram.BotToken,
 						ChatID:     config.Notifications.Telegram.ChatID,
-						EventTypes: config.Notifications.Telegram.Events,
+						EventTypes: telegramEvents,
 					},
 				},
 			},

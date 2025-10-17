@@ -109,7 +109,6 @@ export interface NotificationSettings {
   slack: {
     enabled: boolean;
     webhook_url: string;
-    channel: string;
     event_types: string[];
   };
   telegram: {

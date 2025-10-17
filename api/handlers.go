@@ -240,7 +240,6 @@ type EmailSettingsResponse struct {
 type SlackSettingsResponse struct {
 	Enabled    bool     `json:"enabled"`
 	WebhookURL string   `json:"webhook_url"`
-	Channel    string   `json:"channel"`
 	EventTypes []string `json:"event_types"`
 }
 
@@ -277,7 +276,6 @@ func (s *Server) handleGetNotificationSettings(w http.ResponseWriter, r *http.Re
 		Slack: SlackSettingsResponse{
 			Enabled:    s.state.Config.Notifications.Slack.Enabled,
 			WebhookURL: s.state.Config.Notifications.Slack.WebhookURL,
-			Channel:    s.state.Config.Notifications.Slack.Channel,
 			EventTypes: s.state.Config.Notifications.Slack.EventTypes,
 		},
 		Telegram: TelegramSettingsResponse{
@@ -323,7 +321,6 @@ func (s *Server) handleUpdateNotificationSettings(w http.ResponseWriter, r *http
 
 	s.state.Config.Notifications.Slack.Enabled = req.Slack.Enabled
 	s.state.Config.Notifications.Slack.WebhookURL = req.Slack.WebhookURL
-	s.state.Config.Notifications.Slack.Channel = req.Slack.Channel
 	s.state.Config.Notifications.Slack.EventTypes = req.Slack.EventTypes
 
 	s.state.Config.Notifications.Telegram.Enabled = req.Telegram.Enabled
