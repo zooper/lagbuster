@@ -141,3 +141,16 @@ export async function updateNotificationSettings(
     throw new Error(`Failed to update notification settings: ${res.statusText}`);
   }
 }
+
+export async function testNotification(channel: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/settings/notifications/test`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ channel }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to send test notification: ${res.statusText}`);
+  }
+}

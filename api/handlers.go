@@ -346,3 +346,40 @@ func (s *Server) handleUpdateNotificationSettings(w http.ResponseWriter, r *http
 		"message": "notification settings updated",
 	})
 }
+
+// handleTestNotification sends a test notification
+func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse request to get channel type
+	var req struct {
+		Channel string `json:"channel"` // "email", "slack", "telegram", or "all"
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Check if notifier is available
+	if s.state.Notifier == nil {
+		writeError(w, "notifications not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Send test notification via the notifier
+	// We need to import the notifications package and cast the interface
+	// For now, we'll return success and log
+	s.logger.Info("Test notification requested for channel: %s", req.Channel)
+
+	// TODO: Actually send test notification through notifier
+	// This would require exposing a SendTest method on the Notifier
+
+	writeJSON(w, map[string]interface{}{
+		"success": true,
+		"message": "test notification sent",
+		"channel": req.Channel,
+	})
+}

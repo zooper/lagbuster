@@ -118,6 +118,7 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/api/events", s.handleEvents).Methods("GET")
 	s.router.HandleFunc("/api/settings/notifications", s.handleGetNotificationSettings).Methods("GET")
 	s.router.HandleFunc("/api/settings/notifications", s.handleUpdateNotificationSettings).Methods("PUT", "POST")
+	s.router.HandleFunc("/api/settings/notifications/test", s.handleTestNotification).Methods("POST")
 
 	// WebSocket
 	s.router.HandleFunc("/ws", s.handleWebSocket)

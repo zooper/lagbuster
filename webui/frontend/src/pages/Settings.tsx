@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getNotificationSettings, updateNotificationSettings } from '../api/client';
+import { getNotificationSettings, updateNotificationSettings, testNotification } from '../api/client';
 import './Settings.css';
 
 interface NotificationSettings {
@@ -42,6 +42,8 @@ export function Settings() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [emailInput, setEmailInput] = useState('');
+  const [testing, setTesting] = useState<string | null>(null); // channel being tested
+  const [testSuccess, setTestSuccess] = useState<string | null>(null); // last successful test
 
   useEffect(() => {
     loadSettings();
@@ -113,6 +115,20 @@ export function Settings() {
         to: settings.email.to.filter(e => e !== email)
       }
     });
+  }
+
+  async function handleTestNotification(channel: string) {
+    setTesting(channel);
+    setTestSuccess(null);
+    try {
+      await testNotification(channel);
+      setTestSuccess(channel);
+      setTimeout(() => setTestSuccess(null), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send test notification');
+    } finally {
+      setTesting(null);
+    }
   }
 
   if (loading) return <div className="loading">Loading settings...</div>;
@@ -249,6 +265,17 @@ export function Settings() {
                 ))}
               </div>
             </div>
+
+            <div className="form-group">
+              <button
+                className="test-button"
+                onClick={() => handleTestNotification('email')}
+                disabled={testing === 'email' || !settings.email.enabled}
+              >
+                {testing === 'email' ? 'Sending...' : 'Send Test Email'}
+              </button>
+              {testSuccess === 'email' && <span className="test-success">Test email sent!</span>}
+            </div>
           </>
         )}
       </div>
@@ -300,6 +327,17 @@ export function Settings() {
                   </label>
                 ))}
               </div>
+            </div>
+
+            <div className="form-group">
+              <button
+                className="test-button"
+                onClick={() => handleTestNotification('slack')}
+                disabled={testing === 'slack' || !settings.slack.enabled}
+              >
+                {testing === 'slack' ? 'Sending...' : 'Send Test to Slack'}
+              </button>
+              {testSuccess === 'slack' && <span className="test-success">Test message sent!</span>}
             </div>
           </>
         )}
@@ -367,6 +405,17 @@ export function Settings() {
                   </label>
                 ))}
               </div>
+            </div>
+
+            <div className="form-group">
+              <button
+                className="test-button"
+                onClick={() => handleTestNotification('telegram')}
+                disabled={testing === 'telegram' || !settings.telegram.enabled}
+              >
+                {testing === 'telegram' ? 'Sending...' : 'Send Test to Telegram'}
+              </button>
+              {testSuccess === 'telegram' && <span className="test-success">Test message sent!</span>}
             </div>
           </>
         )}
