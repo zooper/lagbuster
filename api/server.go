@@ -17,7 +17,8 @@ import (
 
 // Config represents the application configuration (subset needed for API)
 type Config struct {
-	Notifications NotificationConfig `yaml:"notifications"`
+	MeasurementInterval int                   `yaml:"measurement_interval"`
+	Notifications       NotificationConfig `yaml:"notifications"`
 }
 
 type NotificationConfig struct {

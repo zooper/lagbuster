@@ -4,9 +4,37 @@ import './PeerCard.css';
 
 interface PeerCardProps {
   peer: PeerStatus;
+  measurementInterval: number;
 }
 
-export function PeerCard({ peer }: PeerCardProps) {
+// Format duration from consecutive count (assuming 10 second measurement interval)
+function formatDuration(consecutiveCount: number, measurementInterval: number = 10): string {
+  const totalSeconds = consecutiveCount * measurementInterval;
+
+  if (totalSeconds < 60) {
+    return `${totalSeconds} seconds`;
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  if (minutes < 60) {
+    if (seconds === 0) {
+      return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+    }
+    return `${minutes}m ${seconds}s`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+
+  if (remainingMinutes === 0) {
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  }
+  return `${hours}h ${remainingMinutes}m`;
+}
+
+export function PeerCard({ peer, measurementInterval }: PeerCardProps) {
   const healthClass = peer.is_healthy ? 'healthy' : 'unhealthy';
   const primaryClass = peer.is_primary ? 'primary' : '';
   const degradationPercent =
@@ -51,11 +79,11 @@ export function PeerCard({ peer }: PeerCardProps) {
       <div className="peer-counters">
         {peer.is_healthy ? (
           <div className="counter healthy-counter">
-            Consecutive Healthy: {peer.consecutive_healthy_count}
+            Healthy for: {formatDuration(peer.consecutive_healthy_count, measurementInterval)}
           </div>
         ) : (
           <div className="counter unhealthy-counter">
-            Consecutive Unhealthy: {peer.consecutive_unhealthy_count}
+            Unhealthy for: {formatDuration(peer.consecutive_unhealthy_count, measurementInterval)}
           </div>
         )}
       </div>

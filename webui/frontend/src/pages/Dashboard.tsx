@@ -107,7 +107,7 @@ export function Dashboard() {
         <h2>BGP Peers</h2>
         <div className="peers-grid">
           {peerArray.map((peer) => (
-            <PeerCard key={peer.name} peer={peer} />
+            <PeerCard key={peer.name} peer={peer} measurementInterval={status.measurement_interval} />
           ))}
         </div>
       </section>

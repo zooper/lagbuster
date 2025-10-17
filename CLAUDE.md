@@ -262,3 +262,5 @@ Listed in README.md but not yet implemented:
 - Alert integration (email/Slack)
 - Historical data persistence
 - Multi-path load balancing support
+- When ssh'ing into the router, always use -A for ssh-key forwarding
+- when deploying new changes, commit and push them. Then logon to the router and pull the changes.

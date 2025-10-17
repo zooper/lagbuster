@@ -14,6 +14,7 @@ export interface StatusResponse {
   current_primary: string;
   uptime_seconds: number;
   last_switch?: string;
+  measurement_interval: number;
   peers: { [key: string]: PeerStatus };
 }
 

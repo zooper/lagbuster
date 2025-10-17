@@ -8,10 +8,11 @@ import (
 
 // StatusResponse represents the current system status
 type StatusResponse struct {
-	CurrentPrimary string                `json:"current_primary"`
-	Uptime         int64                 `json:"uptime_seconds"`
-	LastSwitch     *time.Time            `json:"last_switch,omitempty"`
-	Peers          map[string]PeerStatus `json:"peers"`
+	CurrentPrimary      string                `json:"current_primary"`
+	Uptime              int64                 `json:"uptime_seconds"`
+	LastSwitch          *time.Time            `json:"last_switch,omitempty"`
+	MeasurementInterval int                   `json:"measurement_interval"`
+	Peers               map[string]PeerStatus `json:"peers"`
 }
 
 // PeerStatus represents a peer's current status
@@ -53,9 +54,10 @@ func (s *Server) getCurrentStatus() StatusResponse {
 	}
 
 	resp := StatusResponse{
-		CurrentPrimary: s.state.CurrentPrimary,
-		Uptime:         int64(time.Since(s.state.StartTime).Seconds()),
-		Peers:          peers,
+		CurrentPrimary:      s.state.CurrentPrimary,
+		Uptime:              int64(time.Since(s.state.StartTime).Seconds()),
+		MeasurementInterval: s.state.Config.MeasurementInterval,
+		Peers:               peers,
 	}
 
 	if !s.state.LastSwitchTime.IsZero() {

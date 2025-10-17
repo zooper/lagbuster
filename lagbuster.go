@@ -246,6 +246,7 @@ func main() {
 			StartTime:      state.StartTime,
 			Peers:          make(map[string]*api.PeerState),
 			Config: &api.Config{
+				MeasurementInterval: config.Damping.MeasurementInterval,
 				Notifications: api.NotificationConfig{
 					Enabled:          config.Notifications.Enabled,
 					RateLimitMinutes: config.Notifications.RateLimitMinutes,
