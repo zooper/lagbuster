@@ -235,3 +235,15 @@ func (s *Server) rebuildNotificationChannels() {
 	// For now, changes take effect in memory
 	s.logger.Info("Rebuilding notification channels with new settings")
 }
+
+// UpdateState updates the server's state without recreating the server
+// This preserves Config, Notifier, and ConfigPath while updating dynamic fields
+func (s *Server) UpdateState(currentPrimary string, lastSwitchTime time.Time, startTime time.Time, peers map[string]*PeerState) {
+	s.state.mu.Lock()
+	defer s.state.mu.Unlock()
+
+	s.state.CurrentPrimary = currentPrimary
+	s.state.LastSwitchTime = lastSwitchTime
+	s.state.StartTime = startTime
+	s.state.Peers = peers
+}

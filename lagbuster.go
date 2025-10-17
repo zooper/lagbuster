@@ -950,15 +950,10 @@ func updateAPIServerState(state *AppState) {
 		return
 	}
 
-	apiState := &api.AppState{
-		CurrentPrimary: state.CurrentPrimary,
-		LastSwitchTime: state.LastSwitchTime,
-		StartTime:      state.StartTime,
-		Peers:          make(map[string]*api.PeerState),
-	}
-
+	// Convert peers to API format
+	apiPeers := make(map[string]*api.PeerState)
 	for name, peer := range state.Peers {
-		apiState.Peers[name] = &api.PeerState{
+		apiPeers[name] = &api.PeerState{
 			Name:                      peer.Config.Name,
 			Hostname:                  peer.Config.Hostname,
 			Baseline:                  peer.Config.ExpectedBaseline,
@@ -970,7 +965,7 @@ func updateAPIServerState(state *AppState) {
 		}
 	}
 
-	// Update API server's state pointer atomically
-	// (Note: In production, this would use proper state synchronization)
-	*state.apiServer = *api.NewServer(apiState, state.db, logger)
+	// Update API server state without recreating the entire server
+	// This preserves Config, Notifier, and ConfigPath
+	state.apiServer.UpdateState(state.CurrentPrimary, state.LastSwitchTime, state.StartTime, apiPeers)
 }
