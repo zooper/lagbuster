@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS events (
     old_health BOOLEAN,  -- For health_change events
     new_health BOOLEAN,  -- For health_change events
     reason TEXT,  -- Human-readable reason
-    metadata TEXT,  -- JSON for additional data
+    metadata TEXT  -- JSON for additional data
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
