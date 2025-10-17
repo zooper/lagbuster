@@ -364,11 +364,14 @@ func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Cast interface to actual Notifier type and send test
 	s.logger.Info("Sending test notification for channel: %s", req.Channel)
 
-	// Check if notifier is available
-	if s.state.Notifier == nil {
+	// Check if notifier is available BEFORE any type assertions
+	s.state.mu.RLock()
+	notifierInterface := s.state.Notifier
+	s.state.mu.RUnlock()
+
+	if notifierInterface == nil {
 		s.logger.Warn("Notifications are not enabled - cannot send test")
 		writeError(w, "notifications are not enabled in configuration", http.StatusBadRequest)
 		return
@@ -379,15 +382,17 @@ func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) 
 		SendTest(channelName string) error
 	}
 
-	if notifier, ok := s.state.Notifier.(testSender); ok {
-		if err := notifier.SendTest(req.Channel); err != nil {
-			s.logger.Error("Test notification failed: %v", err)
-			writeError(w, fmt.Sprintf("test notification failed: %v", err), http.StatusInternalServerError)
-			return
-		}
-	} else {
+	notifier, ok := notifierInterface.(testSender)
+	if !ok {
 		s.logger.Error("Notifier does not support SendTest method")
 		writeError(w, "test notifications not supported", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Actually send the test
+	if err := notifier.SendTest(req.Channel); err != nil {
+		s.logger.Error("Test notification failed: %v", err)
+		writeError(w, fmt.Sprintf("test notification failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
