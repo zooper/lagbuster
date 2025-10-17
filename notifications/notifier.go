@@ -105,6 +105,52 @@ func (n *Notifier) AddChannel(channel Channel) {
 	n.channels = append(n.channels, channel)
 }
 
+// SendTest sends a test notification to a specific channel or all channels
+func (n *Notifier) SendTest(channelName string) error {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+
+	// Create test event
+	testEvent := Event{
+		Type:      EventType("test"),
+		Reason:    "This is a test notification from Lagbuster",
+		Timestamp: time.Now(),
+	}
+
+	var sentCount int
+	var lastError error
+
+	for _, channel := range n.channels {
+		// Skip if channel doesn't match (unless "all" is specified)
+		if channelName != "all" && channel.Name() != channelName {
+			continue
+		}
+
+		if !channel.IsEnabled() {
+			n.logger.Warn("Channel %s is not enabled, skipping test", channel.Name())
+			continue
+		}
+
+		// Send test notification (bypass rate limiting and event type filtering for tests)
+		if err := channel.Send(testEvent); err != nil {
+			n.logger.Error("Failed to send test notification via %s: %v", channel.Name(), err)
+			lastError = err
+		} else {
+			n.logger.Info("Sent test notification via %s", channel.Name())
+			sentCount++
+		}
+	}
+
+	if sentCount == 0 {
+		if lastError != nil {
+			return fmt.Errorf("test notification failed: %w", lastError)
+		}
+		return fmt.Errorf("no enabled channels found for: %s", channelName)
+	}
+
+	return nil
+}
+
 // MainConfig holds the top-level notifications configuration
 type MainConfig struct {
 	Enabled          bool           `yaml:"enabled"`

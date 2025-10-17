@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -369,17 +370,29 @@ func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Send test notification via the notifier
-	// We need to import the notifications package and cast the interface
-	// For now, we'll return success and log
-	s.logger.Info("Test notification requested for channel: %s", req.Channel)
+	// Cast interface to actual Notifier type and send test
+	s.logger.Info("Sending test notification for channel: %s", req.Channel)
 
-	// TODO: Actually send test notification through notifier
-	// This would require exposing a SendTest method on the Notifier
+	// Type assertion to access SendTest method
+	type testSender interface {
+		SendTest(channelName string) error
+	}
+
+	if notifier, ok := s.state.Notifier.(testSender); ok {
+		if err := notifier.SendTest(req.Channel); err != nil {
+			s.logger.Error("Test notification failed: %v", err)
+			writeError(w, fmt.Sprintf("test notification failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		s.logger.Error("Notifier does not support SendTest method")
+		writeError(w, "test notifications not supported", http.StatusServiceUnavailable)
+		return
+	}
 
 	writeJSON(w, map[string]interface{}{
 		"success": true,
-		"message": "test notification sent",
+		"message": "test notification sent successfully",
 		"channel": req.Channel,
 	})
 }
