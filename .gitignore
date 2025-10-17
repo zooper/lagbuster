@@ -42,3 +42,4 @@ webui/frontend/build/
 
 # Test configs
 config-local-test.yaml
+config.yaml
