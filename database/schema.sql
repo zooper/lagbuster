@@ -7,10 +7,11 @@ CREATE TABLE IF NOT EXISTS measurements (
     peer_name TEXT NOT NULL,
     latency REAL NOT NULL,  -- -1 for timeout/unreachable
     is_healthy BOOLEAN NOT NULL,
-    is_primary BOOLEAN NOT NULL,
-    INDEX idx_measurements_timestamp (timestamp),
-    INDEX idx_measurements_peer (peer_name, timestamp)
+    is_primary BOOLEAN NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_measurements_timestamp ON measurements(timestamp);
+CREATE INDEX IF NOT EXISTS idx_measurements_peer ON measurements(peer_name, timestamp);
 
 -- System events (switches, health changes, etc.)
 CREATE TABLE IF NOT EXISTS events (
@@ -24,9 +25,10 @@ CREATE TABLE IF NOT EXISTS events (
     new_health BOOLEAN,  -- For health_change events
     reason TEXT,  -- Human-readable reason
     metadata TEXT,  -- JSON for additional data
-    INDEX idx_events_timestamp (timestamp),
-    INDEX idx_events_type (event_type, timestamp)
 );
+
+CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type, timestamp);
 
 -- Notification log
 CREATE TABLE IF NOT EXISTS notifications (
