@@ -4,7 +4,7 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const LAGBUSTER_API = process.env.LAGBUSTER_API || 'http://localhost:8080';
+const LAGBUSTER_API = process.env.LAGBUSTER_API || 'http://127.0.0.1:8080';
 
 // Proxy API requests to lagbuster backend
 app.use('/api', createProxyMiddleware({
