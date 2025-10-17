@@ -73,7 +73,10 @@ func (t *TelegramChannel) Send(event Event) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telegram returned status %d", resp.StatusCode)
+		// Read response body for debugging
+		var responseBody bytes.Buffer
+		responseBody.ReadFrom(resp.Body)
+		return fmt.Errorf("telegram returned status %d: %s", resp.StatusCode, responseBody.String())
 	}
 
 	return nil
@@ -127,9 +130,17 @@ The BGP path optimization service has started.`, timestamp)
 
 The BGP path optimization service has been stopped.`, timestamp)
 
+	case "test":
+		return fmt.Sprintf(`🧪 <b>Test Notification</b>
+
+<b>Time:</b> %s
+
+%s`, timestamp, event.Reason)
+
 	default:
 		return fmt.Sprintf(`<b>Event: %s</b>
 
-<b>Time:</b> %s`, event.Type, timestamp)
+<b>Time:</b> %s
+<b>Reason:</b> %s`, event.Type, timestamp, event.Reason)
 	}
 }
