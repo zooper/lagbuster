@@ -8,11 +8,27 @@ interface EventLogProps {
   maxEvents?: number;
 }
 
+// Define all available event types
+const EVENT_TYPES = [
+  { value: 'switch', label: 'Primary Switch', icon: '🔄' },
+  { value: 'failback', label: 'Failback', icon: '↩️' },
+  { value: 'unhealthy', label: 'Peer Unhealthy', icon: '⚠️' },
+  { value: 'recovery', label: 'Peer Recovery', icon: '✅' },
+  { value: 'health_change', label: 'Health Change', icon: '🔔' },
+  { value: 'startup', label: 'System Startup', icon: '🚀' },
+  { value: 'shutdown', label: 'System Shutdown', icon: '🛑' },
+] as const;
+
 export function EventLog({ initialRange = '24h', maxEvents }: EventLogProps) {
   const [range, setRange] = useState<TimeRange>(initialRange);
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Initialize with all event types enabled
+  const [enabledEventTypes, setEnabledEventTypes] = useState<Set<string>>(
+    new Set(EVENT_TYPES.map(et => et.value))
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -106,6 +122,21 @@ export function EventLog({ initialRange = '24h', maxEvents }: EventLogProps) {
     }
   }
 
+  function toggleEventType(eventType: string) {
+    setEnabledEventTypes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(eventType)) {
+        newSet.delete(eventType);
+      } else {
+        newSet.add(eventType);
+      }
+      return newSet;
+    });
+  }
+
+  // Filter events based on enabled types
+  const filteredEvents = events.filter(event => enabledEventTypes.has(event.event_type));
+
   return (
     <div className="event-log">
       <div className="event-log-header">
@@ -123,15 +154,35 @@ export function EventLog({ initialRange = '24h', maxEvents }: EventLogProps) {
         </div>
       </div>
 
+      <div className="event-filters">
+        <div className="filter-label">Filter Events:</div>
+        <div className="filter-checkboxes">
+          {EVENT_TYPES.map((eventType) => (
+            <label key={eventType.value} className="filter-checkbox">
+              <input
+                type="checkbox"
+                checked={enabledEventTypes.has(eventType.value)}
+                onChange={() => toggleEventType(eventType.value)}
+              />
+              <span className="checkbox-icon">{eventType.icon}</span>
+              <span className="checkbox-label">{eventType.label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
       <div className="event-list">
         {loading && <div className="loading">Loading events...</div>}
         {error && <div className="error">Error: {error}</div>}
+        {!loading && !error && filteredEvents.length === 0 && events.length > 0 && (
+          <div className="no-events">No events match the selected filters</div>
+        )}
         {!loading && !error && events.length === 0 && (
           <div className="no-events">No events in this time range</div>
         )}
         {!loading &&
           !error &&
-          events.map((event) => (
+          filteredEvents.map((event) => (
             <div key={event.id} className={`event-item ${getEventClass(event.event_type)}`}>
               <div className="event-icon">{getEventIcon(event.event_type)}</div>
               <div className="event-content">

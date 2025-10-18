@@ -105,3 +105,61 @@
 .error {
   color: #f44336;
 }
+
+.event-filters {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 15px;
+  margin-bottom: 15px;
+  background: #f5f5f5;
+  border-radius: 6px;
+  flex-wrap: wrap;
+}
+
+.filter-label {
+  font-weight: 600;
+  color: #555;
+  white-space: nowrap;
+}
+
+.filter-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.filter-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.filter-checkbox:hover {
+  background: #fafafa;
+  border-color: #bbb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.filter-checkbox input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
+}
+
+.checkbox-icon {
+  font-size: 1.1em;
+  line-height: 1;
+}
+
+.checkbox-label {
+  font-size: 0.9em;
+  color: #555;
+  white-space: nowrap;
+}
