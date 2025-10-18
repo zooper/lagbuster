@@ -105,6 +105,14 @@ func (n *Notifier) AddChannel(channel Channel) {
 	n.channels = append(n.channels, channel)
 }
 
+// UpdateChannels replaces all channels with new ones (e.g., after config change)
+func (n *Notifier) UpdateChannels(channels []Channel) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.channels = channels
+	n.logger.Info("Notification channels updated (%d channels)", len(channels))
+}
+
 // SendTest sends a test notification to a specific channel or all channels
 func (n *Notifier) SendTest(channelName string) error {
 	n.mu.RLock()
@@ -158,4 +166,50 @@ type MainConfig struct {
 	Email            EmailConfig    `yaml:"email"`
 	Slack            SlackConfig    `yaml:"slack"`
 	Telegram         TelegramConfig `yaml:"telegram"`
+}
+
+// BuildChannels creates notification channels based on configuration
+func BuildChannels(config MainConfig, logger Logger) []Channel {
+	var channels []Channel
+
+	// Email channel
+	if config.Email.Enabled {
+		emailChan := NewEmailChannel(EmailConfig{
+			Enabled:  config.Email.Enabled,
+			SMTPHost: config.Email.SMTPHost,
+			SMTPPort: config.Email.SMTPPort,
+			Username: config.Email.Username,
+			Password: config.Email.Password,
+			From:     config.Email.From,
+			To:       config.Email.To,
+			Events:   config.Email.Events,
+		})
+		channels = append(channels, emailChan)
+		logger.Info("Email notifications enabled (to: %v)", config.Email.To)
+	}
+
+	// Slack channel
+	if config.Slack.Enabled {
+		slackChan := NewSlackChannel(SlackConfig{
+			Enabled:    config.Slack.Enabled,
+			WebhookURL: config.Slack.WebhookURL,
+			Events:     config.Slack.Events,
+		})
+		channels = append(channels, slackChan)
+		logger.Info("Slack notifications enabled")
+	}
+
+	// Telegram channel
+	if config.Telegram.Enabled {
+		telegramChan := NewTelegramChannel(TelegramConfig{
+			Enabled:  config.Telegram.Enabled,
+			BotToken: config.Telegram.BotToken,
+			ChatID:   config.Telegram.ChatID,
+			Events:   config.Telegram.Events,
+		})
+		channels = append(channels, telegramChan)
+		logger.Info("Telegram notifications enabled (chat: %s)", config.Telegram.ChatID)
+	}
+
+	return channels
 }

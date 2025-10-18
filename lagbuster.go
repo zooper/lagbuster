@@ -203,7 +203,7 @@ func main() {
 	// Initialize notifications if configured
 	var notifier *notifications.Notifier
 	if config.Notifications.Enabled {
-		channels := buildNotificationChannels(config.Notifications, logger)
+		channels := notifications.BuildChannels(config.Notifications, logger)
 		notifier = notifications.NewNotifier(channels, config.Notifications.RateLimitMinutes, logger)
 		logger.Info("Notifications initialized with %d channels", len(channels))
 
@@ -899,52 +899,6 @@ func generateBirdConfig(state *AppState, priorities map[string]int) string {
 
 	return sb.String()
 }
-// buildNotificationChannels creates notification channels based on configuration
-func buildNotificationChannels(config notifications.MainConfig, logger *Logger) []notifications.Channel {
-	var channels []notifications.Channel
-
-	// Email channel
-	if config.Email.Enabled {
-		emailChan := notifications.NewEmailChannel(notifications.EmailConfig{
-			Enabled:  config.Email.Enabled,
-			SMTPHost: config.Email.SMTPHost,
-			SMTPPort: config.Email.SMTPPort,
-			Username: config.Email.Username,
-			Password: config.Email.Password,
-			From:     config.Email.From,
-			To:       config.Email.To,
-			Events:   config.Email.Events,
-		})
-		channels = append(channels, emailChan)
-		logger.Info("Email notifications enabled (to: %v)", config.Email.To)
-	}
-
-	// Slack channel
-	if config.Slack.Enabled {
-		slackChan := notifications.NewSlackChannel(notifications.SlackConfig{
-			Enabled:    config.Slack.Enabled,
-			WebhookURL: config.Slack.WebhookURL,
-			Events:     config.Slack.Events,
-		})
-		channels = append(channels, slackChan)
-		logger.Info("Slack notifications enabled")
-	}
-
-	// Telegram channel
-	if config.Telegram.Enabled {
-		telegramChan := notifications.NewTelegramChannel(notifications.TelegramConfig{
-			Enabled:  config.Telegram.Enabled,
-			BotToken: config.Telegram.BotToken,
-			ChatID:   config.Telegram.ChatID,
-			Events:   config.Telegram.Events,
-		})
-		channels = append(channels, telegramChan)
-		logger.Info("Telegram notifications enabled (chat: %s)", config.Telegram.ChatID)
-	}
-
-	return channels
-}
-
 // updateAPIServerState synchronizes AppState to API server state
 func updateAPIServerState(state *AppState) {
 	if state.apiServer == nil {

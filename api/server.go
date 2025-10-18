@@ -55,14 +55,15 @@ type TelegramConfig struct {
 
 // AppState represents the current application state (same as lagbuster.go)
 type AppState struct {
-	CurrentPrimary string
-	LastSwitchTime time.Time
-	StartTime      time.Time
-	Peers          map[string]*PeerState
-	Config         *Config
-	Notifier       interface{} // notifications.Notifier (avoid circular import)
-	ConfigPath     string      // Path to config file for saving
-	mu             sync.RWMutex
+	CurrentPrimary       string
+	LastSwitchTime       time.Time
+	StartTime            time.Time
+	Peers                map[string]*PeerState
+	Config               *Config
+	Notifier             interface{}          // notifications.Notifier (avoid circular import)
+	ConfigPath           string               // Path to config file for saving
+	RebuildNotifications func(*Config) error // Callback to rebuild notification channels
+	mu                   sync.RWMutex
 }
 
 // PeerState represents a peer's current state
@@ -270,9 +271,29 @@ func (s *Server) saveConfig() error {
 
 // rebuildNotificationChannels rebuilds notification channels with new settings
 func (s *Server) rebuildNotificationChannels() {
-	// This will trigger notification channel rebuild in the main app
-	// For now, changes take effect in memory
 	s.logger.Info("Rebuilding notification channels with new settings")
+
+	s.state.mu.RLock()
+	rebuildFunc := s.state.RebuildNotifications
+	config := s.state.Config
+	s.state.mu.RUnlock()
+
+	if rebuildFunc == nil {
+		s.logger.Warn("Notification rebuild function not available - restart required for changes to take effect")
+		return
+	}
+
+	if config == nil {
+		s.logger.Warn("Config not available for rebuild")
+		return
+	}
+
+	// Call the rebuild function
+	if err := rebuildFunc(config); err != nil {
+		s.logger.Error("Failed to rebuild notification channels: %v", err)
+	} else {
+		s.logger.Info("Notification channels rebuilt successfully")
+	}
 }
 
 // UpdateState updates the server's state without recreating the server
