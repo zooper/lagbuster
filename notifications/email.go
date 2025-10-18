@@ -15,7 +15,7 @@ type EmailConfig struct {
 	Password  string      `yaml:"password"`
 	From      string      `yaml:"from"`
 	To        []string    `yaml:"to"`
-	Events    []EventType `yaml:"events"`
+	Events    []EventType `yaml:"event_types"`
 }
 
 // EmailChannel implements email notifications

@@ -13,7 +13,7 @@ type TelegramConfig struct {
 	Enabled  bool        `yaml:"enabled"`
 	BotToken string      `yaml:"bot_token"`
 	ChatID   string      `yaml:"chat_id"`
-	Events   []EventType `yaml:"events"`
+	Events   []EventType `yaml:"event_types"`
 }
 
 // TelegramChannel implements Telegram notifications

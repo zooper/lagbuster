@@ -136,7 +136,7 @@ notifications:
       - "ops@example.com"
       - "oncall@example.com"
     # Event types to notify about
-    events:
+    event_types:
       - "switch"
       - "failback"
       - "unhealthy"
@@ -145,7 +145,7 @@ notifications:
   slack:
     enabled: false
     webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
-    events:
+    event_types:
       - "switch"
       - "failback"
       - "unhealthy"
@@ -156,7 +156,7 @@ notifications:
     enabled: false
     bot_token: "YOUR_BOT_TOKEN"
     chat_id: "YOUR_CHAT_ID"
-    events:
+    event_types:
       - "switch"
       - "failback"
       - "unhealthy"
