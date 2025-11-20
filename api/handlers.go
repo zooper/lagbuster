@@ -26,6 +26,8 @@ type PeerStatus struct {
 	IsPrimary                 bool    `json:"is_primary"`
 	ConsecutiveHealthyCount   int     `json:"consecutive_healthy_count"`
 	ConsecutiveUnhealthyCount int     `json:"consecutive_unhealthy_count"`
+	BGPSessionUp              bool    `json:"bgp_session_up"`
+	BGPSessionState           string  `json:"bgp_session_state"`
 }
 
 // handleStatus returns the current system status
@@ -50,6 +52,8 @@ func (s *Server) getCurrentStatus() StatusResponse {
 			IsPrimary:                 peer.IsPrimary,
 			ConsecutiveHealthyCount:   peer.ConsecutiveHealthyCount,
 			ConsecutiveUnhealthyCount: peer.ConsecutiveUnhealthyCount,
+			BGPSessionUp:              peer.BGPSessionUp,
+			BGPSessionState:           peer.BGPSessionState,
 		}
 	}
 

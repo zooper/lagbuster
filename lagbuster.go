@@ -104,6 +104,8 @@ type PeerState struct {
 	ConsecutiveHealthyCount   int
 	IsHealthy                 bool
 	IsPrimary                 bool
+	BGPSessionUp              bool   // Whether BGP session is established in Bird
+	BGPSessionState           string // Current BGP session state from Bird
 }
 
 type AppState struct {
@@ -378,10 +380,15 @@ func initializeState(config Config) *AppState {
 
 // Run one monitoring cycle
 func runMonitoringCycle(state *AppState) {
-	// Measure latency for all peers
+	// Measure latency and BGP session status for all peers
 	for _, peer := range state.Peers {
 		latency := pingHost(peer.Config.Hostname)
 		peer.CurrentLatency = latency
+
+		// Check BGP session status
+		bgpUp, bgpState := checkBGPSession(peer.Config.Name, state.Config.Bird)
+		peer.BGPSessionUp = bgpUp
+		peer.BGPSessionState = bgpState
 
 		// Add to measurement window
 		peer.Measurements = append(peer.Measurements, latency)
@@ -390,8 +397,8 @@ func runMonitoringCycle(state *AppState) {
 		}
 
 		if state.Config.Logging.LogMeasurements {
-			logger.Debug("Peer %s: latency=%.2fms, baseline=%.2fms",
-				peer.Config.Name, latency, peer.Config.ExpectedBaseline)
+			logger.Debug("Peer %s: latency=%.2fms, baseline=%.2fms, BGP=%s",
+				peer.Config.Name, latency, peer.Config.ExpectedBaseline, bgpState)
 		}
 
 		// Record measurement to database
@@ -464,6 +471,74 @@ func pingHost(host string) float64 {
 	}
 
 	return latency
+}
+
+// Check BGP session status for a peer via birdc
+func checkBGPSession(peerName string, config BirdConfig) (bool, string) {
+	// Construct the Bird protocol name from peer name
+	// Example: nyc01 -> JC01_NYC01 (assumes uppercase conversion)
+	protocolName := strings.ToUpper(peerName)
+	// Prepend router prefix if peer name doesn't already include it
+	// This assumes Bird protocol names follow pattern like JC01_NYC01
+	if !strings.Contains(protocolName, "_") {
+		// Extract router name from first peer's bird_variable if needed
+		// For now, try to guess from context
+		protocolName = "JC01_" + protocolName
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.BirdcTimeout)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, config.BirdcPath, "show", "protocols", protocolName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		logger.Debug("Failed to check BGP session for %s: %v", peerName, err)
+		return false, "Unknown"
+	}
+
+	outputStr := string(output)
+
+	// Parse birdc output for BGP state
+	// Expected format: "PROTOCOL_NAME  BGP   ---   up/start   TIMESTAMP   Established/Active/..."
+	lines := strings.Split(outputStr, "\n")
+	for _, line := range lines {
+		// Skip header and empty lines
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "BIRD") || strings.HasPrefix(line, "Name") {
+			continue
+		}
+
+		// Look for state information - format varies but "Established" means BGP is up
+		if strings.Contains(line, "BGP state:") {
+			// Detailed state line like: "  BGP state:          Established"
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				state := strings.TrimSpace(parts[1])
+				isUp := state == "Established"
+				logger.Debug("BGP session %s state: %s (up=%v)", peerName, state, isUp)
+				return isUp, state
+			}
+		} else if strings.Contains(line, "Established") {
+			// Summary line contains "Established"
+			logger.Debug("BGP session %s: Established", peerName)
+			return true, "Established"
+		} else if strings.Contains(line, "Active") || strings.Contains(line, "Connect") ||
+		           strings.Contains(line, "Idle") || strings.Contains(line, "start") {
+			// Other BGP states indicate session is down
+			state := "Down"
+			if strings.Contains(line, "Active") {
+				state = "Active"
+			} else if strings.Contains(line, "Connect") {
+				state = "Connect"
+			} else if strings.Contains(line, "Idle") {
+				state = "Idle"
+			}
+			logger.Debug("BGP session %s state: %s (up=false)", peerName, state)
+			return false, state
+		}
+	}
+
+	logger.Debug("Could not determine BGP state for %s from birdc output", peerName)
+	return false, "Unknown"
 }
 
 // Evaluate health of all peers
@@ -582,8 +657,9 @@ func selectPrimary(state *AppState) string {
 		// Only consider failback if we're not currently on preferred primary
 		if state.CurrentPrimary != preferredPrimary {
 			if preferredPeer, exists := state.Peers[preferredPrimary]; exists {
-				// Check if preferred peer is healthy and has sustained health
+				// Check if preferred peer is healthy, has sustained health, AND has BGP session up
 				if preferredPeer.IsHealthy &&
+				   preferredPeer.BGPSessionUp &&
 				   preferredPeer.ConsecutiveHealthyCount >= state.Config.Failback.ConsecutiveHealthyCount {
 
 					// Check if we need to wait for cooldown before failback
@@ -591,10 +667,13 @@ func selectPrimary(state *AppState) string {
 						logger.Debug("Preferred primary %s ready for failback but in cooldown (%.0fs remaining)",
 							preferredPrimary, float64(damping.CooldownPeriod)-timeSinceSwitch)
 					} else {
-						logger.Info("Failing back to preferred primary %s (healthy for %d consecutive measurements)",
+						logger.Info("Failing back to preferred primary %s (healthy for %d consecutive measurements, BGP=Established)",
 							preferredPrimary, preferredPeer.ConsecutiveHealthyCount)
 						return preferredPrimary
 					}
+				} else if preferredPeer.IsHealthy && !preferredPeer.BGPSessionUp {
+					logger.Debug("Preferred primary %s is healthy but BGP session not established (state=%s)",
+						preferredPrimary, preferredPeer.BGPSessionState)
 				}
 			}
 		}
@@ -637,14 +716,22 @@ func selectPrimary(state *AppState) string {
 // Find the best peer to use as primary
 func findBestPeer(state *AppState) string {
 	type peerScore struct {
-		name    string
-		latency float64
-		healthy bool
+		name      string
+		latency   float64
+		healthy   bool
+		bgpUp     bool
 	}
 
 	scores := make([]peerScore, 0, len(state.Peers))
 
 	for name, peer := range state.Peers {
+		// Skip peers with BGP sessions that are not established
+		if !peer.BGPSessionUp {
+			logger.Debug("Skipping peer %s: BGP session not established (state=%s)",
+				name, peer.BGPSessionState)
+			continue
+		}
+
 		latency := peer.CurrentLatency
 		if latency < 0 {
 			latency = state.Config.Thresholds.TimeoutLatency
@@ -654,7 +741,14 @@ func findBestPeer(state *AppState) string {
 			name:    name,
 			latency: latency,
 			healthy: peer.IsHealthy,
+			bgpUp:   peer.BGPSessionUp,
 		})
+	}
+
+	// If no peers have established BGP sessions, log error and fall back to current primary
+	if len(scores) == 0 {
+		logger.Error("No peers have established BGP sessions! Keeping current primary: %s", state.CurrentPrimary)
+		return state.CurrentPrimary
 	}
 
 	// Sort by: healthy first, then by latency
@@ -674,7 +768,7 @@ func findBestPeer(state *AppState) string {
 				healthyCount++
 			}
 		}
-		logger.Info("Best peer selection: %s (latency=%.2fms, healthy=%v, %d/%d peers healthy)",
+		logger.Info("Best peer selection: %s (latency=%.2fms, healthy=%v, BGP=up, %d/%d BGP-established peers healthy)",
 			bestPeer, scores[0].latency, scores[0].healthy, healthyCount, len(scores))
 	}
 
@@ -917,6 +1011,8 @@ func updateAPIServerState(state *AppState) {
 			IsPrimary:                 peer.IsPrimary,
 			ConsecutiveHealthyCount:   peer.ConsecutiveHealthyCount,
 			ConsecutiveUnhealthyCount: peer.ConsecutiveUnhealthyCount,
+			BGPSessionUp:              peer.BGPSessionUp,
+			BGPSessionState:           peer.BGPSessionState,
 		}
 	}
 

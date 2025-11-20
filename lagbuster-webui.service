@@ -1,0 +1,21 @@
+[Unit]
+Description=Lagbuster Web UI
+After=network.target lagbuster.service
+Wants=lagbuster.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/lagbuster/webui/backend
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+Environment="LAGBUSTER_API=http://localhost:8080"
+Environment="PORT=3000"
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lagbuster-webui
+
+[Install]
+WantedBy=multi-user.target

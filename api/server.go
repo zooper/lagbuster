@@ -77,6 +77,8 @@ type PeerState struct {
 	ConsecutiveHealthyCount   int
 	ConsecutiveUnhealthyCount int
 	Measurements              []float64
+	BGPSessionUp              bool
+	BGPSessionState           string
 }
 
 // Server is the HTTP API server
