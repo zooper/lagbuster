@@ -268,7 +268,24 @@ func (s *Server) handleGetNotificationSettings(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Build response from config
+	// Build response from config, ensuring arrays are never null
+	emailTo := s.state.Config.Notifications.Email.To
+	if emailTo == nil {
+		emailTo = []string{}
+	}
+	emailEventTypes := s.state.Config.Notifications.Email.EventTypes
+	if emailEventTypes == nil {
+		emailEventTypes = []string{}
+	}
+	slackEventTypes := s.state.Config.Notifications.Slack.EventTypes
+	if slackEventTypes == nil {
+		slackEventTypes = []string{}
+	}
+	telegramEventTypes := s.state.Config.Notifications.Telegram.EventTypes
+	if telegramEventTypes == nil {
+		telegramEventTypes = []string{}
+	}
+
 	resp := NotificationSettingsResponse{
 		Enabled:          s.state.Config.Notifications.Enabled,
 		RateLimitMinutes: s.state.Config.Notifications.RateLimitMinutes,
@@ -277,19 +294,19 @@ func (s *Server) handleGetNotificationSettings(w http.ResponseWriter, r *http.Re
 			SMTPHost:   s.state.Config.Notifications.Email.SMTPHost,
 			SMTPPort:   s.state.Config.Notifications.Email.SMTPPort,
 			From:       s.state.Config.Notifications.Email.From,
-			To:         s.state.Config.Notifications.Email.To,
-			EventTypes: s.state.Config.Notifications.Email.EventTypes,
+			To:         emailTo,
+			EventTypes: emailEventTypes,
 		},
 		Slack: SlackSettingsResponse{
 			Enabled:    s.state.Config.Notifications.Slack.Enabled,
 			WebhookURL: s.state.Config.Notifications.Slack.WebhookURL,
-			EventTypes: s.state.Config.Notifications.Slack.EventTypes,
+			EventTypes: slackEventTypes,
 		},
 		Telegram: TelegramSettingsResponse{
 			Enabled:    s.state.Config.Notifications.Telegram.Enabled,
 			BotToken:   s.state.Config.Notifications.Telegram.BotToken,
 			ChatID:     s.state.Config.Notifications.Telegram.ChatID,
-			EventTypes: s.state.Config.Notifications.Telegram.EventTypes,
+			EventTypes: telegramEventTypes,
 		},
 	}
 
