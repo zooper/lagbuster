@@ -27,13 +27,14 @@ The application follows a monitoring loop architecture with these main phases:
 
 ### Decision Logic Flow
 
-The decision engine (`selectPrimary()` at lagbuster.go:376-443) follows this hierarchy:
+The decision engine (`selectPrimary()` at lagbuster.go:644-735) follows this hierarchy:
 
 1. **Failback check**: If failback enabled and preferred primary has been healthy for required duration, switch back to it
 2. **Cooldown check**: If recently switched (within `cooldown_period`), stay on current primary (unless failback)
 3. **Comfort zone**: If current primary is healthy AND within comfort threshold, stay (stability preferred)
 4. **Damping**: Only switch if current primary unhealthy for N consecutive measurements (`consecutive_unhealthy_count`)
-5. **Best alternative**: Find healthiest peer with lowest latency
+5. **Alternative health check**: Only switch if the best alternative is actually healthy. If all peers are unhealthy with similar issues, stay on current primary (avoids unnecessary churn). Exception: switch if current is unreachable but alternative has connectivity.
+6. **Best alternative**: Find healthiest peer with lowest latency
 
 Health evaluation (`isPeerHealthy()` at lagbuster.go:356-374):
 - Unhealthy if: ping fails (latency = -1), latency > baseline + degradation_threshold, OR latency > absolute_max_latency

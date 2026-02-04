@@ -710,7 +710,28 @@ func selectPrimary(state *AppState) string {
 	}
 
 	// Time to switch - find best alternative
-	return findBestPeer(state)
+	bestPeer := findBestPeer(state)
+	bestPeerState := state.Peers[bestPeer]
+
+	// Don't switch if the best alternative is also unhealthy
+	// Exception: switch if current is completely unreachable and alternative has connectivity
+	if !bestPeerState.IsHealthy {
+		currentUnreachable := currentPeer.CurrentLatency < 0
+		alternativeReachable := bestPeerState.CurrentLatency >= 0
+
+		if currentUnreachable && alternativeReachable {
+			// Current is unreachable but alternative has connectivity - worth switching
+			logger.Info("Current primary unreachable, switching to %s (unhealthy but reachable)", bestPeer)
+			return bestPeer
+		}
+
+		// Both are unhealthy with similar issues - no benefit to switching
+		logger.Debug("Best alternative %s is also unhealthy (latency=%.2fms) - staying on current primary",
+			bestPeer, bestPeerState.CurrentLatency)
+		return state.CurrentPrimary
+	}
+
+	return bestPeer
 }
 
 // Find the best peer to use as primary
