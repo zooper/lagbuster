@@ -1,30 +1,34 @@
-# Lagbuster Configuration Example
+# Lagbuster Configuration Example - Asymmetric Routing (ECMP)
 # Copy this file to config.yaml and customize for your environment
+#
+# Lagbuster operates in asymmetric routing mode where all healthy peers with
+# established BGP sessions receive equal priority (priority 1) for ECMP routing.
+# Unhealthy peers are automatically disabled (priority 99).
 
 # Edge router peers to monitor
 peers:
   - name: edge01
     hostname: edge01.example.com
     expected_baseline: 45.0  # milliseconds - your expected "good" latency
-    bird_variable: core01_edge01_lagbuster_priority
+    bird_variable: core01_edge01_lagbuster_priority  # For Bird mode
+    nexthop: "2001:db8:ff::1"  # For ExaBGP mode - BGP next-hop IPv6 address
 
   - name: edge02
     hostname: edge02.example.com
     expected_baseline: 55.0  # milliseconds
     bird_variable: core01_edge02_lagbuster_priority
+    nexthop: "2001:db8:ff::2"
 
   - name: edge03
     hostname: edge03.example.com
     expected_baseline: 52.0  # milliseconds
     bird_variable: core01_edge03_lagbuster_priority
+    nexthop: "2001:db8:ff::3"
 
 # Health check thresholds
 thresholds:
-  # Switch away from current primary if it degrades by this much from its baseline
+  # Mark peer as unhealthy if it degrades by this much from its baseline
   degradation_threshold: 20.0  # milliseconds
-
-  # Stay on current primary if within this comfort zone above baseline
-  comfort_threshold: 10.0  # milliseconds
 
   # Hard limit - any peer exceeding this is considered unhealthy regardless of baseline
   absolute_max_latency: 150.0  # milliseconds
@@ -34,46 +38,27 @@ thresholds:
 
 # Damping settings to prevent route flapping
 damping:
-  # Require this many consecutive unhealthy measurements before switching away from current primary
+  # Require this many consecutive unhealthy measurements before marking peer as unhealthy
+  # Recommended: 3 measurements (degrade quickly to remove bad paths)
   consecutive_unhealthy_count: 3
+
+  # Require this many consecutive healthy measurements before marking peer as healthy again
+  # Recommended: 12 measurements (recover slowly to ensure sustained health)
+  # This asymmetric damping prevents flapping while quickly removing bad paths
+  consecutive_healthy_count_for_recovery: 12
 
   # How often to measure latency
   measurement_interval: 10  # seconds
-
-  # Minimum time between switches (cooldown period)
-  cooldown_period: 180  # seconds (3 minutes)
 
   # Size of rolling window for tracking measurements per peer
   measurement_window: 20  # number of measurements to keep
 
 # Startup behavior
 startup:
-  # Wait this long before making first priority change (allows baselines to stabilize)
+  # Wait this long before making first configuration changes (allows baselines to stabilize)
   grace_period: 60  # seconds
 
-  # Initial primary peer (by name) - will be used until grace period expires
-  initial_primary: edge01
-
-  # Preferred primary for automatic failback (optional)
-  # If set and failback is enabled, lagbuster will automatically switch back to this peer
-  # after it has been healthy for the configured duration
-  preferred_primary: edge01  # must match a peer name above
-
-# Automatic failback to preferred primary
-failback:
-  # Enable automatic failback to preferred primary when it recovers
-  enabled: true
-
-  # Number of consecutive healthy measurements required before failing back
-  # With measurement_interval=10s, 180 measurements = 30 minutes of sustained health
-  consecutive_healthy_count: 180  # measurements (e.g., 180 × 10s = 30 minutes)
-
-  # Wait for cooldown period to complete before allowing failback
-  # If false, failback can happen immediately after consecutive_healthy_count is reached
-  # If true, must also wait cooldown_period seconds since last switch
-  require_cooldown_before_failback: true
-
-# Bird integration
+# Bird integration (traditional config-file approach)
 bird:
   # Path to lagbuster-managed priorities file
   priorities_file: /etc/bird/lagbuster-priorities.conf
@@ -83,6 +68,19 @@ bird:
 
   # Timeout for birdc commands
   birdc_timeout: 5  # seconds
+
+# ExaBGP integration (API-driven approach - alternative to Bird)
+exabgp:
+  # Enable ExaBGP mode instead of Bird mode
+  # When enabled, lagbuster will announce routes via ExaBGP API (named pipe)
+  # When disabled, lagbuster uses Bird config file approach (default)
+  enabled: false
+
+# Announced prefixes (only used in ExaBGP mode)
+# These are the IPv6 prefixes that lagbuster will announce via ExaBGP
+announced_prefixes:
+  - "2001:db8::/32"
+  # Add your actual prefixes here when using ExaBGP mode
 
 # Logging
 logging:
@@ -135,21 +133,19 @@ notifications:
     to:
       - "ops@example.com"
       - "oncall@example.com"
-    # Event types to notify about
+    # Event types to notify about (available: unhealthy, recovery, startup)
     event_types:
-      - "switch"
-      - "failback"
       - "unhealthy"
+      - "recovery"
 
   # Slack notifications via webhook
   slack:
     enabled: false
     webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
     event_types:
-      - "switch"
-      - "failback"
       - "unhealthy"
       - "recovery"
+      - "startup"
 
   # Telegram notifications via bot
   telegram:
@@ -157,9 +153,6 @@ notifications:
     bot_token: "YOUR_BOT_TOKEN"
     chat_id: "YOUR_CHAT_ID"
     event_types:
-      - "switch"
-      - "failback"
       - "unhealthy"
       - "recovery"
       - "startup"
-      - "shutdown"

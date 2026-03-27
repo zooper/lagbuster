@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"lagbuster/api"
 	"lagbuster/database"
+	"lagbuster/exabgp"
 	"lagbuster/notifications"
 	"log"
 	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,56 +23,53 @@ import (
 
 // Configuration structures
 type Config struct {
-	Peers         []PeerConfig              `yaml:"peers"`
-	Thresholds    ThresholdConfig           `yaml:"thresholds"`
-	Damping       DampingConfig             `yaml:"damping"`
-	Startup       StartupConfig             `yaml:"startup"`
-	Failback      FailbackConfig            `yaml:"failback"`
-	Bird          BirdConfig                `yaml:"bird"`
-	Logging       LoggingConfig             `yaml:"logging"`
-	Mode          ModeConfig                `yaml:"mode"`
-	API           APIConfig                 `yaml:"api"`
-	Database      DatabaseConfig            `yaml:"database"`
-	Notifications notifications.MainConfig  `yaml:"notifications"`
+	Peers            []PeerConfig              `yaml:"peers"`
+	Thresholds       ThresholdConfig           `yaml:"thresholds"`
+	Damping          DampingConfig             `yaml:"damping"`
+	Startup          StartupConfig             `yaml:"startup"`
+	Bird             BirdConfig                `yaml:"bird"`
+	ExaBGP           ExaBGPConfig              `yaml:"exabgp"`
+	AnnouncedPrefixes []string                 `yaml:"announced_prefixes"`
+	Logging          LoggingConfig             `yaml:"logging"`
+	Mode             ModeConfig                `yaml:"mode"`
+	API              APIConfig                 `yaml:"api"`
+	Database         DatabaseConfig            `yaml:"database"`
+	Notifications    notifications.MainConfig  `yaml:"notifications"`
 }
 
 type PeerConfig struct {
 	Name             string  `yaml:"name"`
 	Hostname         string  `yaml:"hostname"`
 	ExpectedBaseline float64 `yaml:"expected_baseline"`
-	BirdVariable     string  `yaml:"bird_variable"`
+	BirdVariable     string  `yaml:"bird_variable"` // For Bird mode
+	NextHop          string  `yaml:"nexthop"`        // For ExaBGP mode - BGP next-hop IPv6 address
 }
 
 type ThresholdConfig struct {
 	DegradationThreshold float64 `yaml:"degradation_threshold"`
-	ComfortThreshold     float64 `yaml:"comfort_threshold"`
 	AbsoluteMaxLatency   float64 `yaml:"absolute_max_latency"`
 	TimeoutLatency       float64 `yaml:"timeout_latency"`
 }
 
 type DampingConfig struct {
-	ConsecutiveUnhealthyCount int `yaml:"consecutive_unhealthy_count"`
-	MeasurementInterval       int `yaml:"measurement_interval"`
-	CooldownPeriod            int `yaml:"cooldown_period"`
-	MeasurementWindow         int `yaml:"measurement_window"`
+	ConsecutiveUnhealthyCount          int `yaml:"consecutive_unhealthy_count"`
+	ConsecutiveHealthyCountForRecovery int `yaml:"consecutive_healthy_count_for_recovery"`
+	MeasurementInterval                int `yaml:"measurement_interval"`
+	MeasurementWindow                  int `yaml:"measurement_window"`
 }
 
 type StartupConfig struct {
-	GracePeriod      int    `yaml:"grace_period"`
-	InitialPrimary   string `yaml:"initial_primary"`
-	PreferredPrimary string `yaml:"preferred_primary"` // Optional: peer to failback to when healthy
-}
-
-type FailbackConfig struct {
-	Enabled                      bool `yaml:"enabled"`                          // Enable automatic failback to preferred primary
-	ConsecutiveHealthyCount      int  `yaml:"consecutive_healthy_count"`        // Measurements preferred peer must be healthy before failback
-	RequireCooldownBeforeFailback bool `yaml:"require_cooldown_before_failback"` // Wait for cooldown period before failback
+	GracePeriod int `yaml:"grace_period"`
 }
 
 type BirdConfig struct {
 	PrioritiesFile string `yaml:"priorities_file"`
 	BirdcPath      string `yaml:"birdc_path"`
 	BirdcTimeout   int    `yaml:"birdc_timeout"`
+}
+
+type ExaBGPConfig struct {
+	Enabled bool `yaml:"enabled"` // Use ExaBGP instead of Bird
 }
 
 type LoggingConfig struct {
@@ -103,20 +100,18 @@ type PeerState struct {
 	ConsecutiveUnhealthyCount int
 	ConsecutiveHealthyCount   int
 	IsHealthy                 bool
-	IsPrimary                 bool
 	BGPSessionUp              bool   // Whether BGP session is established in Bird
 	BGPSessionState           string // Current BGP session state from Bird
 }
 
 type AppState struct {
-	Config         Config
-	Peers          map[string]*PeerState
-	CurrentPrimary string
-	LastSwitchTime time.Time
-	StartTime      time.Time
-	db             *database.DB
-	notifier       *notifications.Notifier
-	apiServer      *api.Server
+	Config     Config
+	Peers      map[string]*PeerState
+	StartTime  time.Time
+	db         *database.DB
+	notifier   *notifications.Notifier
+	apiServer  *api.Server
+	exabgp     *exabgp.Client // ExaBGP API client (when ExaBGP mode enabled)
 }
 
 // Logger wrapper for structured logging
@@ -243,10 +238,8 @@ func main() {
 
 		// Create API state wrapper from AppState
 		apiState := &api.AppState{
-			CurrentPrimary: state.CurrentPrimary,
-			LastSwitchTime: state.LastSwitchTime,
-			StartTime:      state.StartTime,
-			Peers:          make(map[string]*api.PeerState),
+			StartTime: state.StartTime,
+			Peers:     make(map[string]*api.PeerState),
 			Config: &api.Config{
 				MeasurementInterval: config.Damping.MeasurementInterval,
 				Notifications: api.NotificationConfig{
@@ -287,9 +280,10 @@ func main() {
 				Baseline:                  peer.Config.ExpectedBaseline,
 				CurrentLatency:            peer.CurrentLatency,
 				IsHealthy:                 peer.IsHealthy,
-				IsPrimary:                 peer.IsPrimary,
 				ConsecutiveHealthyCount:   peer.ConsecutiveHealthyCount,
 				ConsecutiveUnhealthyCount: peer.ConsecutiveUnhealthyCount,
+				BGPSessionUp:              peer.BGPSessionUp,
+				BGPSessionState:           peer.BGPSessionState,
 			}
 		}
 
@@ -316,7 +310,7 @@ func main() {
 	runMonitoringCycle(state)
 
 	// Apply initial Bird configuration based on first measurement
-	logger.Info("Applying initial Bird configuration with primary: %s", state.CurrentPrimary)
+	logger.Info("Applying initial Bird configuration (asymmetric routing mode)")
 	if !config.Mode.DryRun {
 		err := applyBirdConfiguration(state)
 		if err != nil {
@@ -358,22 +352,27 @@ func loadConfig(filename string) (Config, error) {
 // Initialize application state
 func initializeState(config Config) *AppState {
 	state := &AppState{
-		Config:         config,
-		Peers:          make(map[string]*PeerState),
-		CurrentPrimary: config.Startup.InitialPrimary,
-		StartTime:      time.Now(),
+		Config:    config,
+		Peers:     make(map[string]*PeerState),
+		StartTime: time.Now(),
 	}
 
-	// Initialize peer states
+	// Initialize peer states (all start as healthy by default, will be evaluated on first cycle)
 	for _, peerConfig := range config.Peers {
 		state.Peers[peerConfig.Name] = &PeerState{
 			Config:       peerConfig,
 			Measurements: make([]float64, 0, config.Damping.MeasurementWindow),
-			IsPrimary:    peerConfig.Name == config.Startup.InitialPrimary,
+			IsHealthy:    true, // Assume healthy until first measurement
 		}
 	}
 
-	logger.Info("Initialized with %d peers, primary: %s", len(state.Peers), state.CurrentPrimary)
+	logger.Info("Initialized with %d peers in asymmetric routing mode (ECMP)", len(state.Peers))
+
+	// Initialize ExaBGP client if enabled
+	if config.ExaBGP.Enabled {
+		state.exabgp = exabgp.NewClient()
+		logger.Info("ExaBGP API client initialized (pipe: %s)", exabgp.PipePath)
+	}
 
 	return state
 }
@@ -386,9 +385,16 @@ func runMonitoringCycle(state *AppState) {
 		peer.CurrentLatency = latency
 
 		// Check BGP session status
-		bgpUp, bgpState := checkBGPSession(peer.Config.Name, state.Config.Bird)
-		peer.BGPSessionUp = bgpUp
-		peer.BGPSessionState = bgpState
+		// In ExaBGP mode, assume sessions are up (ExaBGP manages them directly)
+		// In Bird mode, check session status via birdc
+		if state.Config.ExaBGP.Enabled {
+			peer.BGPSessionUp = true
+			peer.BGPSessionState = "Established"
+		} else {
+			bgpUp, bgpState := checkBGPSession(peer.Config.Name, state.Config.Bird)
+			peer.BGPSessionUp = bgpUp
+			peer.BGPSessionState = bgpState
+		}
 
 		// Add to measurement window
 		peer.Measurements = append(peer.Measurements, latency)
@@ -398,26 +404,31 @@ func runMonitoringCycle(state *AppState) {
 
 		if state.Config.Logging.LogMeasurements {
 			logger.Debug("Peer %s: latency=%.2fms, baseline=%.2fms, BGP=%s",
-				peer.Config.Name, latency, peer.Config.ExpectedBaseline, bgpState)
+				peer.Config.Name, latency, peer.Config.ExpectedBaseline, peer.BGPSessionState)
 		}
 
 		// Record measurement to database
 		if state.db != nil {
-			if err := state.db.RecordMeasurement(peer.Config.Name, latency, peer.IsHealthy, peer.IsPrimary); err != nil {
+			if err := state.db.RecordMeasurement(peer.Config.Name, latency, peer.IsHealthy, false); err != nil {
 				logger.Error("Failed to record measurement for %s: %v", peer.Config.Name, err)
 			}
 		}
 	}
 
-	// Evaluate health of all peers
+	// Evaluate health of all peers (with damping)
 	evaluatePeerHealth(state)
 
-	// Make primary selection decision
-	newPrimary := selectPrimary(state)
-
-	// Apply changes if needed
-	if newPrimary != state.CurrentPrimary {
-		switchPrimary(state, newPrimary)
+	// Apply routing configuration based on mode
+	if state.Config.ExaBGP.Enabled {
+		// ExaBGP mode: API-driven route announcements
+		if err := applyExaBGPConfiguration(state); err != nil {
+			logger.Error("Failed to apply ExaBGP configuration: %v", err)
+		}
+	} else {
+		// Bird mode: Config file approach
+		if err := applyBirdConfiguration(state); err != nil {
+			logger.Error("Failed to apply Bird configuration: %v", err)
+		}
 	}
 
 	// Update API server state
@@ -425,7 +436,7 @@ func runMonitoringCycle(state *AppState) {
 }
 
 // Ping a host and return latency in milliseconds
-// Uses IPv4 only to ensure consistent measurements
+// Supports both IPv4 and IPv6 addresses
 // Uses context-based timeout to prevent hanging on unreachable hosts
 func pingHost(host string) float64 {
 	// Create context with 5-second timeout (safety margin above ping's 3s timeout)
@@ -436,14 +447,14 @@ func pingHost(host string) float64 {
 	var cmd *exec.Cmd
 
 	// Different ping syntax for different operating systems
-	// macOS: ping is IPv4 by default (ping6 for IPv6), use -t for timeout
-	// Linux: supports -4 flag for IPv4, -W is in milliseconds
+	// Let ping auto-detect IPv4 vs IPv6 based on hostname resolution
 	if runtime.GOOS == "darwin" {
-		// macOS: ping is IPv4 by default, -t 3 = 3 second timeout, -W is broken on macOS
+		// macOS: -t 3 = 3 second timeout
 		cmd = exec.CommandContext(ctx, "ping", "-c", "1", "-t", "3", host)
 	} else {
-		// Linux: use -4 flag to force IPv4, -W timeout in milliseconds
-		cmd = exec.CommandContext(ctx, "ping", "-4", "-c", "1", "-W", "3000", host)
+		// Linux: -W timeout in milliseconds
+		// No -4 or -6 flag - let ping auto-detect based on DNS resolution
+		cmd = exec.CommandContext(ctx, "ping", "-c", "1", "-W", "3000", host)
 	}
 
 	output, err := cmd.CombinedOutput()
@@ -541,18 +552,17 @@ func checkBGPSession(peerName string, config BirdConfig) (bool, string) {
 	return false, "Unknown"
 }
 
-// Evaluate health of all peers
+// Evaluate health of all peers with damping
 func evaluatePeerHealth(state *AppState) {
 	for name, peer := range state.Peers {
 		latency := peer.CurrentLatency
 		baseline := peer.Config.ExpectedBaseline
 
-		// Check if peer is healthy
-		wasHealthy := peer.IsHealthy
-		peer.IsHealthy = isPeerHealthy(latency, baseline, state.Config.Thresholds)
+		// Check current health (without damping)
+		currentlyHealthy := isPeerHealthy(latency, baseline, state.Config.Thresholds)
 
 		// Track consecutive unhealthy/healthy counts
-		if !peer.IsHealthy {
+		if !currentlyHealthy {
 			peer.ConsecutiveUnhealthyCount++
 			peer.ConsecutiveHealthyCount = 0
 		} else {
@@ -560,29 +570,39 @@ func evaluatePeerHealth(state *AppState) {
 			peer.ConsecutiveHealthyCount++
 		}
 
-		// Handle health transitions
+		// Apply damping: only change state after consecutive threshold
+		wasHealthy := peer.IsHealthy
+		if peer.IsHealthy && peer.ConsecutiveUnhealthyCount >= state.Config.Damping.ConsecutiveUnhealthyCount {
+			// Degrade: healthy → unhealthy after N consecutive bad measurements
+			peer.IsHealthy = false
+		} else if !peer.IsHealthy && peer.ConsecutiveHealthyCount >= state.Config.Damping.ConsecutiveHealthyCountForRecovery {
+			// Recover: unhealthy → healthy after M consecutive good measurements
+			peer.IsHealthy = true
+		}
+
+		// Handle health transitions (only log/notify on actual state changes)
 		if wasHealthy != peer.IsHealthy {
 			// Determine reason for health change
 			var reason string
 			if !peer.IsHealthy {
 				if latency < 0 {
 					reason = "unreachable/timeout"
-					logger.Info("Peer %s became UNHEALTHY: unreachable/timeout, baseline=%.2fms",
-						name, baseline)
+					logger.Info("Peer %s became UNHEALTHY after %d consecutive unhealthy measurements: unreachable/timeout, baseline=%.2fms",
+						name, peer.ConsecutiveUnhealthyCount, baseline)
 				} else if latency > state.Config.Thresholds.AbsoluteMaxLatency {
 					reason = fmt.Sprintf("latency %.2fms exceeds absolute max %.2fms", latency, state.Config.Thresholds.AbsoluteMaxLatency)
-					logger.Info("Peer %s became UNHEALTHY: latency=%.2fms exceeds absolute max (%.2fms), baseline=%.2fms",
-						name, latency, state.Config.Thresholds.AbsoluteMaxLatency, baseline)
+					logger.Info("Peer %s became UNHEALTHY after %d consecutive unhealthy measurements: latency=%.2fms exceeds absolute max (%.2fms), baseline=%.2fms",
+						name, peer.ConsecutiveUnhealthyCount, latency, state.Config.Thresholds.AbsoluteMaxLatency, baseline)
 				} else {
 					degradation := latency - baseline
 					reason = fmt.Sprintf("degradation %.2fms above baseline", degradation)
-					logger.Info("Peer %s became UNHEALTHY: latency=%.2fms, baseline=%.2fms, degradation=%.2fms",
-						name, latency, baseline, degradation)
+					logger.Info("Peer %s became UNHEALTHY after %d consecutive unhealthy measurements: latency=%.2fms, baseline=%.2fms, degradation=%.2fms",
+						name, peer.ConsecutiveUnhealthyCount, latency, baseline, degradation)
 				}
 			} else {
 				reason = "latency returned to acceptable levels"
-				logger.Info("Peer %s became HEALTHY: latency=%.2fms, baseline=%.2fms",
-					name, latency, baseline)
+				logger.Info("Peer %s became HEALTHY after %d consecutive healthy measurements: latency=%.2fms, baseline=%.2fms",
+					name, peer.ConsecutiveHealthyCount, latency, baseline)
 			}
 
 			// Record health change event to database
@@ -640,266 +660,6 @@ func isPeerHealthy(latency float64, baseline float64, thresholds ThresholdConfig
 	return true
 }
 
-// Select the best primary peer
-func selectPrimary(state *AppState) string {
-	currentPeer := state.Peers[state.CurrentPrimary]
-	thresholds := state.Config.Thresholds
-	damping := state.Config.Damping
-
-	// Check if we're in cooldown period (unless it's a failback attempt)
-	timeSinceSwitch := time.Since(state.LastSwitchTime).Seconds()
-	inCooldown := timeSinceSwitch < float64(damping.CooldownPeriod) && !state.LastSwitchTime.IsZero()
-
-	// Check for preferred primary failback
-	if state.Config.Failback.Enabled && state.Config.Startup.PreferredPrimary != "" {
-		preferredPrimary := state.Config.Startup.PreferredPrimary
-
-		// Only consider failback if we're not currently on preferred primary
-		if state.CurrentPrimary != preferredPrimary {
-			if preferredPeer, exists := state.Peers[preferredPrimary]; exists {
-				// Check if preferred peer is healthy, has sustained health, AND has BGP session up
-				if preferredPeer.IsHealthy &&
-				   preferredPeer.BGPSessionUp &&
-				   preferredPeer.ConsecutiveHealthyCount >= state.Config.Failback.ConsecutiveHealthyCount {
-
-					// Check if we need to wait for cooldown before failback
-					if state.Config.Failback.RequireCooldownBeforeFailback && inCooldown {
-						logger.Debug("Preferred primary %s ready for failback but in cooldown (%.0fs remaining)",
-							preferredPrimary, float64(damping.CooldownPeriod)-timeSinceSwitch)
-					} else {
-						logger.Info("Failing back to preferred primary %s (healthy for %d consecutive measurements, BGP=Established)",
-							preferredPrimary, preferredPeer.ConsecutiveHealthyCount)
-						return preferredPrimary
-					}
-				} else if preferredPeer.IsHealthy && !preferredPeer.BGPSessionUp {
-					logger.Debug("Preferred primary %s is healthy but BGP session not established (state=%s)",
-						preferredPrimary, preferredPeer.BGPSessionState)
-				}
-			}
-		}
-	}
-
-	// Standard cooldown check for non-failback switches
-	if inCooldown {
-		logger.Debug("In cooldown period (%.0fs remaining)",
-			float64(damping.CooldownPeriod)-timeSinceSwitch)
-		return state.CurrentPrimary
-	}
-
-	// Check if current primary is healthy and within comfort zone
-	if currentPeer.IsHealthy {
-		latency := currentPeer.CurrentLatency
-		baseline := currentPeer.Config.ExpectedBaseline
-		degradation := latency - baseline
-
-		if degradation <= thresholds.ComfortThreshold {
-			logger.Debug("Current primary %s is healthy and comfortable (degradation=%.2fms)",
-				state.CurrentPrimary, degradation)
-			return state.CurrentPrimary
-		}
-	}
-
-	// Current primary is unhealthy or uncomfortable
-	// Check if we have enough consecutive unhealthy measurements before switching
-	if currentPeer.ConsecutiveUnhealthyCount < damping.ConsecutiveUnhealthyCount {
-		logger.Debug("Current primary %s unhealthy but waiting for damping (%d/%d)",
-			state.CurrentPrimary,
-			currentPeer.ConsecutiveUnhealthyCount,
-			damping.ConsecutiveUnhealthyCount)
-		return state.CurrentPrimary
-	}
-
-	// Time to switch - find best alternative
-	bestPeer := findBestPeer(state)
-	bestPeerState := state.Peers[bestPeer]
-
-	// Don't switch if the best alternative is also unhealthy
-	// Exception: switch if current is completely unreachable and alternative has connectivity
-	if !bestPeerState.IsHealthy {
-		currentUnreachable := currentPeer.CurrentLatency < 0
-		alternativeReachable := bestPeerState.CurrentLatency >= 0
-
-		if currentUnreachable && alternativeReachable {
-			// Current is unreachable but alternative has connectivity - worth switching
-			logger.Info("Current primary unreachable, switching to %s (unhealthy but reachable)", bestPeer)
-			return bestPeer
-		}
-
-		// Both are unhealthy with similar issues - no benefit to switching
-		logger.Debug("Best alternative %s is also unhealthy (latency=%.2fms) - staying on current primary",
-			bestPeer, bestPeerState.CurrentLatency)
-		return state.CurrentPrimary
-	}
-
-	return bestPeer
-}
-
-// Find the best peer to use as primary
-func findBestPeer(state *AppState) string {
-	type peerScore struct {
-		name      string
-		latency   float64
-		healthy   bool
-		bgpUp     bool
-	}
-
-	scores := make([]peerScore, 0, len(state.Peers))
-
-	for name, peer := range state.Peers {
-		// Skip peers with BGP sessions that are not established
-		if !peer.BGPSessionUp {
-			logger.Debug("Skipping peer %s: BGP session not established (state=%s)",
-				name, peer.BGPSessionState)
-			continue
-		}
-
-		latency := peer.CurrentLatency
-		if latency < 0 {
-			latency = state.Config.Thresholds.TimeoutLatency
-		}
-
-		scores = append(scores, peerScore{
-			name:    name,
-			latency: latency,
-			healthy: peer.IsHealthy,
-			bgpUp:   peer.BGPSessionUp,
-		})
-	}
-
-	// If no peers have established BGP sessions, log error and fall back to current primary
-	if len(scores) == 0 {
-		logger.Error("No peers have established BGP sessions! Keeping current primary: %s", state.CurrentPrimary)
-		return state.CurrentPrimary
-	}
-
-	// Sort by: healthy first, then by latency
-	sort.Slice(scores, func(i, j int) bool {
-		if scores[i].healthy != scores[j].healthy {
-			return scores[i].healthy
-		}
-		return scores[i].latency < scores[j].latency
-	})
-
-	bestPeer := scores[0].name
-
-	if state.Config.Logging.LogDecisions {
-		healthyCount := 0
-		for _, s := range scores {
-			if s.healthy {
-				healthyCount++
-			}
-		}
-		logger.Info("Best peer selection: %s (latency=%.2fms, healthy=%v, BGP=up, %d/%d BGP-established peers healthy)",
-			bestPeer, scores[0].latency, scores[0].healthy, healthyCount, len(scores))
-	}
-
-	return bestPeer
-}
-
-// Switch to a new primary peer
-func switchPrimary(state *AppState, newPrimary string) {
-	oldPrimary := state.CurrentPrimary
-	oldPeer := state.Peers[oldPrimary]
-	newPeer := state.Peers[newPrimary]
-
-	reason := buildSwitchReason(oldPeer, newPeer, state.Config.Thresholds)
-	isFailback := oldPeer.IsHealthy && strings.Contains(reason, "failback")
-
-	if state.Config.Logging.LogDecisions {
-		logger.Info("SWITCHING PRIMARY: %s -> %s | Reason: %s",
-			oldPrimary, newPrimary, reason)
-		logger.Info("  Old: %s latency=%.2fms baseline=%.2fms healthy=%v",
-			oldPrimary, oldPeer.CurrentLatency, oldPeer.Config.ExpectedBaseline, oldPeer.IsHealthy)
-		logger.Info("  New: %s latency=%.2fms baseline=%.2fms healthy=%v",
-			newPrimary, newPeer.CurrentLatency, newPeer.Config.ExpectedBaseline, newPeer.IsHealthy)
-	}
-
-	// Update state
-	oldPeer.IsPrimary = false
-	newPeer.IsPrimary = true
-	state.CurrentPrimary = newPrimary
-	switchTime := time.Now()
-	state.LastSwitchTime = switchTime
-
-	// Reset consecutive counters for new primary
-	newPeer.ConsecutiveUnhealthyCount = 0
-	newPeer.ConsecutiveHealthyCount = 0
-
-	// Record switch event to database
-	if state.db != nil {
-		eventType := "switch"
-		if isFailback {
-			eventType = "failback"
-		}
-		if _, err := state.db.RecordEvent(eventType, nil, &oldPrimary, &newPrimary, nil, nil, reason, nil); err != nil {
-			logger.Error("Failed to record switch event: %v", err)
-		}
-	}
-
-	// Send notification for switch
-	if state.notifier != nil {
-		eventType := notifications.EventSwitch
-		if isFailback {
-			eventType = notifications.EventFailback
-		}
-		state.notifier.Notify(notifications.Event{
-			Type:       eventType,
-			OldPrimary: oldPrimary,
-			NewPrimary: newPrimary,
-			Reason:     reason,
-			Timestamp:  switchTime,
-		})
-	}
-
-	// Broadcast event via WebSocket
-	if state.apiServer != nil {
-		eventTypeStr := "switch"
-		if isFailback {
-			eventTypeStr = "failback"
-		}
-		state.apiServer.BroadcastEvent(eventTypeStr, newPrimary, reason)
-	}
-
-	// Apply changes to Bird
-	if !state.Config.Mode.DryRun {
-		err := applyBirdConfiguration(state)
-		if err != nil {
-			logger.Error("Failed to apply Bird configuration: %v", err)
-		} else {
-			logger.Info("Bird configuration updated successfully")
-		}
-	} else {
-		logger.Info("DRY-RUN: Would update Bird configuration")
-	}
-}
-
-// Build human-readable switch reason
-func buildSwitchReason(oldPeer, newPeer *PeerState, thresholds ThresholdConfig) string {
-	// Check if this is a failback to preferred primary (old peer healthy)
-	if oldPeer.IsHealthy {
-		degradation := oldPeer.CurrentLatency - oldPeer.Config.ExpectedBaseline
-
-		// If old peer is within comfort zone, this is likely a failback
-		if degradation <= thresholds.ComfortThreshold {
-			return fmt.Sprintf("failback to preferred primary (sustained health: %d measurements)",
-				newPeer.ConsecutiveHealthyCount)
-		}
-
-		// Old peer healthy but outside comfort zone
-		return fmt.Sprintf("current primary outside comfort zone (%.2fms above baseline)", degradation)
-	}
-
-	// Old peer is unhealthy
-	degradation := oldPeer.CurrentLatency - oldPeer.Config.ExpectedBaseline
-	if oldPeer.CurrentLatency < 0 {
-		return "current primary unreachable"
-	}
-	if oldPeer.CurrentLatency > thresholds.AbsoluteMaxLatency {
-		return fmt.Sprintf("current primary exceeds absolute max (%.2fms > %.2fms)",
-			oldPeer.CurrentLatency, thresholds.AbsoluteMaxLatency)
-	}
-	return fmt.Sprintf("current primary degraded (%.2fms above baseline)", degradation)
-}
 
 // Apply Bird configuration changes
 func applyBirdConfiguration(state *AppState) error {
@@ -941,39 +701,85 @@ func applyBirdConfiguration(state *AppState) error {
 	return nil
 }
 
+// Apply ExaBGP configuration changes via API
+func applyExaBGPConfiguration(state *AppState) error {
+	// Assign priorities: 1 for healthy, 99 for unhealthy
+	priorities := assignPriorities(state)
+
+	// Log what we're about to do
+	logger.Debug("Applying ExaBGP configuration for %d peers", len(state.Config.Peers))
+
+	// For each peer, announce routes with appropriate priority
+	for _, peerConfig := range state.Config.Peers {
+		peer := state.Peers[peerConfig.Name]
+		priority := priorities[peerConfig.Name]
+
+		// Log the announcement
+		healthStatus := "HEALTHY"
+		if !peer.IsHealthy {
+			healthStatus = "UNHEALTHY"
+		}
+		bgpStatus := "BGP-UP"
+		if !peer.BGPSessionUp {
+			bgpStatus = "BGP-DOWN"
+		}
+
+		logger.Debug("ExaBGP: Peer %s: priority=%d, latency=%.2fms, %s, %s",
+			peerConfig.Name, priority, peer.CurrentLatency, healthStatus, bgpStatus)
+
+		// Dry-run mode: log but don't actually send
+		if state.Config.Mode.DryRun {
+			logger.Info("[DRY-RUN] Would announce %d prefixes for peer %s via %s with priority %d",
+				len(state.Config.AnnouncedPrefixes), peerConfig.Name, peerConfig.NextHop, priority)
+			continue
+		}
+
+		// Send announcement to ExaBGP
+		err := state.exabgp.AnnounceRoutes(
+			peerConfig.Name,
+			peerConfig.NextHop,
+			state.Config.AnnouncedPrefixes,
+			priority,
+		)
+		if err != nil {
+			return fmt.Errorf("announcing routes for peer %s: %w", peerConfig.Name, err)
+		}
+
+		logger.Debug("Successfully announced %d prefixes for peer %s with priority %d",
+			len(state.Config.AnnouncedPrefixes), peerConfig.Name, priority)
+	}
+
+	logger.Info("ExaBGP configuration applied: %d healthy peers, %d unhealthy peers",
+		countHealthyPeers(state), len(state.Config.Peers)-countHealthyPeers(state))
+
+	return nil
+}
+
+// countHealthyPeers returns the number of healthy peers with BGP sessions up
+func countHealthyPeers(state *AppState) int {
+	count := 0
+	for _, peer := range state.Peers {
+		if peer.IsHealthy && peer.BGPSessionUp {
+			count++
+		}
+	}
+	return count
+}
+
 // Assign priority values (1=best, 2=second, 3=third) based on current primary
 func assignPriorities(state *AppState) map[string]int {
-	type peerLatency struct {
-		name    string
-		latency float64
-	}
-
 	priorities := make(map[string]int)
 
-	// Current primary always gets priority 1
-	priorities[state.CurrentPrimary] = 1
-
-	// Collect remaining peers
-	remainingPeers := make([]peerLatency, 0, len(state.Peers)-1)
+	// Asymmetric routing (ECMP): All healthy peers with established BGP get priority 1
+	// Unhealthy or BGP-down peers get priority 99 (effectively disabled)
 	for name, peer := range state.Peers {
-		if name == state.CurrentPrimary {
-			continue // Skip current primary
+		if peer.IsHealthy && peer.BGPSessionUp {
+			// Healthy peer with established BGP session - use for routing
+			priorities[name] = 1
+		} else {
+			// Unhealthy or BGP session down - disable
+			priorities[name] = 99
 		}
-		latency := peer.CurrentLatency
-		if latency < 0 {
-			latency = state.Config.Thresholds.TimeoutLatency
-		}
-		remainingPeers = append(remainingPeers, peerLatency{name: name, latency: latency})
-	}
-
-	// Sort remaining peers by latency (lowest first)
-	sort.Slice(remainingPeers, func(i, j int) bool {
-		return remainingPeers[i].latency < remainingPeers[j].latency
-	})
-
-	// Assign priorities 2, 3, etc. to remaining peers
-	for i, peer := range remainingPeers {
-		priorities[peer.name] = i + 2
 	}
 
 	return priorities
@@ -983,11 +789,25 @@ func assignPriorities(state *AppState) map[string]int {
 func generateBirdConfig(state *AppState, priorities map[string]int) string {
 	var sb strings.Builder
 
-	sb.WriteString("# Lagbuster dynamic priority overrides\n")
+	// Count healthy and unhealthy peers
+	healthyPeers := make([]string, 0)
+	unhealthyPeers := make([]string, 0)
+	for name, peer := range state.Peers {
+		if peer.IsHealthy && peer.BGPSessionUp {
+			healthyPeers = append(healthyPeers, name)
+		} else {
+			unhealthyPeers = append(unhealthyPeers, name)
+		}
+	}
+
+	sb.WriteString("# Lagbuster dynamic priority overrides - Asymmetric Routing (ECMP)\n")
 	sb.WriteString(fmt.Sprintf("# Generated at: %s\n", time.Now().Format(time.RFC3339)))
-	sb.WriteString(fmt.Sprintf("# Current primary: %s\n", state.CurrentPrimary))
 	sb.WriteString("#\n")
-	sb.WriteString("# Priority values: 1=primary, 2=secondary, 3=tertiary\n")
+	sb.WriteString("# Mode: All healthy peers get priority 1 (ECMP)\n")
+	sb.WriteString(fmt.Sprintf("# Healthy peers (%d): %v\n", len(healthyPeers), healthyPeers))
+	sb.WriteString(fmt.Sprintf("# Unhealthy/BGP-down peers (%d): %v\n", len(unhealthyPeers), unhealthyPeers))
+	sb.WriteString("#\n")
+	sb.WriteString("# Priority values: 1=active (ECMP), 99=disabled\n")
 	sb.WriteString("#\n\n")
 
 	// Write peer status as comments
@@ -1029,7 +849,6 @@ func updateAPIServerState(state *AppState) {
 			Baseline:                  peer.Config.ExpectedBaseline,
 			CurrentLatency:            peer.CurrentLatency,
 			IsHealthy:                 peer.IsHealthy,
-			IsPrimary:                 peer.IsPrimary,
 			ConsecutiveHealthyCount:   peer.ConsecutiveHealthyCount,
 			ConsecutiveUnhealthyCount: peer.ConsecutiveUnhealthyCount,
 			BGPSessionUp:              peer.BGPSessionUp,
@@ -1039,5 +858,5 @@ func updateAPIServerState(state *AppState) {
 
 	// Update API server state without recreating the entire server
 	// This preserves Config, Notifier, and ConfigPath
-	state.apiServer.UpdateState(state.CurrentPrimary, state.LastSwitchTime, state.StartTime, apiPeers)
+	state.apiServer.UpdateState(state.StartTime, apiPeers)
 }

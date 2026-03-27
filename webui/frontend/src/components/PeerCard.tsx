@@ -36,17 +36,13 @@ function formatDuration(consecutiveCount: number, measurementInterval: number = 
 
 export function PeerCard({ peer, measurementInterval }: PeerCardProps) {
   const healthClass = peer.is_healthy ? 'healthy' : 'unhealthy';
-  const primaryClass = peer.is_primary ? 'primary' : '';
   const degradationPercent =
     peer.baseline > 0 ? ((peer.degradation / peer.baseline) * 100).toFixed(1) : '0';
 
   return (
-    <div className={`peer-card ${healthClass} ${primaryClass}`}>
+    <div className={`peer-card ${healthClass}`}>
       <div className="peer-header">
-        <h3>
-          {peer.name}
-          {peer.is_primary && <span className="primary-badge">⭐ PRIMARY</span>}
-        </h3>
+        <h3>{peer.name}</h3>
         <div className={`health-indicator ${healthClass}`}>
           {peer.is_healthy ? '✓ Healthy' : '✗ Unhealthy'}
         </div>
@@ -72,6 +68,13 @@ export function PeerCard({ peer, measurementInterval }: PeerCardProps) {
           <div className={`value ${peer.degradation > 0 ? 'warning' : ''}`}>
             {peer.degradation > 0 ? '+' : ''}
             {peer.degradation.toFixed(2)} ms ({degradationPercent}%)
+          </div>
+        </div>
+
+        <div className="metric">
+          <label>BGP Session</label>
+          <div className={`value ${peer.bgp_session_up ? '' : 'warning'}`}>
+            {peer.bgp_session_state}
           </div>
         </div>
       </div>

@@ -5,15 +5,16 @@ export interface PeerStatus {
   baseline: number;
   degradation: number;
   is_healthy: boolean;
-  is_primary: boolean;
   consecutive_healthy_count: number;
   consecutive_unhealthy_count: number;
+  bgp_session_up: boolean;
+  bgp_session_state: string;
 }
 
 export interface StatusResponse {
-  current_primary: string;
+  healthy_peer_count: number;
+  unhealthy_peer_count: number;
   uptime_seconds: number;
-  last_switch?: string;
   measurement_interval: number;
   peers: { [key: string]: PeerStatus };
 }

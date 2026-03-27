@@ -8,9 +8,9 @@ import (
 
 // StatusResponse represents the current system status
 type StatusResponse struct {
-	CurrentPrimary      string                `json:"current_primary"`
+	HealthyPeerCount    int                   `json:"healthy_peer_count"`
+	UnhealthyPeerCount  int                   `json:"unhealthy_peer_count"`
 	Uptime              int64                 `json:"uptime_seconds"`
-	LastSwitch          *time.Time            `json:"last_switch,omitempty"`
 	MeasurementInterval int                   `json:"measurement_interval"`
 	Peers               map[string]PeerStatus `json:"peers"`
 }
@@ -23,7 +23,6 @@ type PeerStatus struct {
 	Baseline                  float64 `json:"baseline"`
 	Degradation               float64 `json:"degradation"`
 	IsHealthy                 bool    `json:"is_healthy"`
-	IsPrimary                 bool    `json:"is_primary"`
 	ConsecutiveHealthyCount   int     `json:"consecutive_healthy_count"`
 	ConsecutiveUnhealthyCount int     `json:"consecutive_unhealthy_count"`
 	BGPSessionUp              bool    `json:"bgp_session_up"`
@@ -40,8 +39,18 @@ func (s *Server) getCurrentStatus() StatusResponse {
 	s.state.mu.RLock()
 	defer s.state.mu.RUnlock()
 
+	// Count healthy and unhealthy peers
+	healthyCount := 0
+	unhealthyCount := 0
+
 	peers := make(map[string]PeerStatus)
 	for name, peer := range s.state.Peers {
+		if peer.IsHealthy {
+			healthyCount++
+		} else {
+			unhealthyCount++
+		}
+
 		peers[name] = PeerStatus{
 			Name:                      peer.Name,
 			Hostname:                  peer.Hostname,
@@ -49,7 +58,6 @@ func (s *Server) getCurrentStatus() StatusResponse {
 			Baseline:                  peer.Baseline,
 			Degradation:               peer.CurrentLatency - peer.Baseline,
 			IsHealthy:                 peer.IsHealthy,
-			IsPrimary:                 peer.IsPrimary,
 			ConsecutiveHealthyCount:   peer.ConsecutiveHealthyCount,
 			ConsecutiveUnhealthyCount: peer.ConsecutiveUnhealthyCount,
 			BGPSessionUp:              peer.BGPSessionUp,
@@ -58,14 +66,11 @@ func (s *Server) getCurrentStatus() StatusResponse {
 	}
 
 	resp := StatusResponse{
-		CurrentPrimary:      s.state.CurrentPrimary,
+		HealthyPeerCount:    healthyCount,
+		UnhealthyPeerCount:  unhealthyCount,
 		Uptime:              int64(time.Since(s.state.StartTime).Seconds()),
 		MeasurementInterval: s.state.Config.MeasurementInterval,
 		Peers:               peers,
-	}
-
-	if !s.state.LastSwitchTime.IsZero() {
-		resp.LastSwitch = &s.state.LastSwitchTime
 	}
 
 	return resp
@@ -85,9 +90,10 @@ func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {
 			Baseline:                  peer.Baseline,
 			Degradation:               peer.CurrentLatency - peer.Baseline,
 			IsHealthy:                 peer.IsHealthy,
-			IsPrimary:                 peer.IsPrimary,
 			ConsecutiveHealthyCount:   peer.ConsecutiveHealthyCount,
 			ConsecutiveUnhealthyCount: peer.ConsecutiveUnhealthyCount,
+			BGPSessionUp:              peer.BGPSessionUp,
+			BGPSessionState:           peer.BGPSessionState,
 		})
 	}
 

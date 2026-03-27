@@ -85,21 +85,17 @@ export function Dashboard() {
         </div>
         <div className="system-info">
           <div className="info-item">
-            <label>Current Primary</label>
-            <div className="value primary-name">{status.current_primary}</div>
+            <label>Routing Mode</label>
+            <div className="value">Asymmetric (ECMP)</div>
+          </div>
+          <div className="info-item">
+            <label>Healthy Peers</label>
+            <div className="value">{status.healthy_peer_count} / {Object.keys(status.peers).length}</div>
           </div>
           <div className="info-item">
             <label>Uptime</label>
             <div className="value">{formatUptime(status.uptime_seconds)}</div>
           </div>
-          {status.last_switch && (
-            <div className="info-item">
-              <label>Last Switch</label>
-              <div className="value">
-                {new Date(status.last_switch).toLocaleString()}
-              </div>
-            </div>
-          )}
         </div>
       </header>
 

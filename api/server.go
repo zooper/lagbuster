@@ -55,8 +55,6 @@ type TelegramConfig struct {
 
 // AppState represents the current application state (same as lagbuster.go)
 type AppState struct {
-	CurrentPrimary       string
-	LastSwitchTime       time.Time
 	StartTime            time.Time
 	Peers                map[string]*PeerState
 	Config               *Config
@@ -73,7 +71,6 @@ type PeerState struct {
 	Baseline                  float64
 	CurrentLatency            float64
 	IsHealthy                 bool
-	IsPrimary                 bool
 	ConsecutiveHealthyCount   int
 	ConsecutiveUnhealthyCount int
 	Measurements              []float64
@@ -300,12 +297,10 @@ func (s *Server) rebuildNotificationChannels() {
 
 // UpdateState updates the server's state without recreating the server
 // This preserves Config, Notifier, and ConfigPath while updating dynamic fields
-func (s *Server) UpdateState(currentPrimary string, lastSwitchTime time.Time, startTime time.Time, peers map[string]*PeerState) {
+func (s *Server) UpdateState(startTime time.Time, peers map[string]*PeerState) {
 	s.state.mu.Lock()
 	defer s.state.mu.Unlock()
 
-	s.state.CurrentPrimary = currentPrimary
-	s.state.LastSwitchTime = lastSwitchTime
 	s.state.StartTime = startTime
 	s.state.Peers = peers
 }
