@@ -41,7 +41,8 @@ type PeerConfig struct {
 	Name             string  `yaml:"name"`
 	Hostname         string  `yaml:"hostname"`
 	ExpectedBaseline float64 `yaml:"expected_baseline"`
-	BirdVariable     string  `yaml:"bird_variable"` // For Bird mode
+	BirdVariable     string  `yaml:"bird_variable"`  // For Bird mode: define variable name in lagbuster-priorities.conf
+	BirdProtocol     string  `yaml:"bird_protocol"`  // For Bird mode: Bird protocol name (e.g. EDGE_NYC_01)
 	NextHop          string  `yaml:"nexthop"`        // For ExaBGP mode - BGP next-hop IPv6 address
 }
 
@@ -391,7 +392,7 @@ func runMonitoringCycle(state *AppState) {
 			peer.BGPSessionUp = true
 			peer.BGPSessionState = "Established"
 		} else {
-			bgpUp, bgpState := checkBGPSession(peer.Config.Name, state.Config.Bird)
+			bgpUp, bgpState := checkBGPSession(peer.Config, state.Config.Bird)
 			peer.BGPSessionUp = bgpUp
 			peer.BGPSessionState = bgpState
 		}
@@ -485,16 +486,11 @@ func pingHost(host string) float64 {
 }
 
 // Check BGP session status for a peer via birdc
-func checkBGPSession(peerName string, config BirdConfig) (bool, string) {
-	// Construct the Bird protocol name from peer name
-	// Example: nyc01 -> JC01_NYC01 (assumes uppercase conversion)
-	protocolName := strings.ToUpper(peerName)
-	// Prepend router prefix if peer name doesn't already include it
-	// This assumes Bird protocol names follow pattern like JC01_NYC01
-	if !strings.Contains(protocolName, "_") {
-		// Extract router name from first peer's bird_variable if needed
-		// For now, try to guess from context
-		protocolName = "JC01_" + protocolName
+func checkBGPSession(peerConfig PeerConfig, config BirdConfig) (bool, string) {
+	protocolName := peerConfig.BirdProtocol
+	if protocolName == "" {
+		logger.Debug("No bird_protocol configured for peer %s, skipping BGP session check", peerConfig.Name)
+		return false, "Unknown"
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.BirdcTimeout)*time.Second)
@@ -503,7 +499,7 @@ func checkBGPSession(peerName string, config BirdConfig) (bool, string) {
 	cmd := exec.CommandContext(ctx, config.BirdcPath, "show", "protocols", protocolName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		logger.Debug("Failed to check BGP session for %s: %v", peerName, err)
+		logger.Debug("Failed to check BGP session for %s: %v", peerConfig.Name, err)
 		return false, "Unknown"
 	}
 
@@ -525,12 +521,12 @@ func checkBGPSession(peerName string, config BirdConfig) (bool, string) {
 			if len(parts) == 2 {
 				state := strings.TrimSpace(parts[1])
 				isUp := state == "Established"
-				logger.Debug("BGP session %s state: %s (up=%v)", peerName, state, isUp)
+				logger.Debug("BGP session %s state: %s (up=%v)", peerConfig.Name, state, isUp)
 				return isUp, state
 			}
 		} else if strings.Contains(line, "Established") {
 			// Summary line contains "Established"
-			logger.Debug("BGP session %s: Established", peerName)
+			logger.Debug("BGP session %s: Established", peerConfig.Name)
 			return true, "Established"
 		} else if strings.Contains(line, "Active") || strings.Contains(line, "Connect") ||
 		           strings.Contains(line, "Idle") || strings.Contains(line, "start") {
@@ -543,12 +539,12 @@ func checkBGPSession(peerName string, config BirdConfig) (bool, string) {
 			} else if strings.Contains(line, "Idle") {
 				state = "Idle"
 			}
-			logger.Debug("BGP session %s state: %s (up=false)", peerName, state)
+			logger.Debug("BGP session %s state: %s (up=false)", peerConfig.Name, state)
 			return false, state
 		}
 	}
 
-	logger.Debug("Could not determine BGP state for %s from birdc output", peerName)
+	logger.Debug("Could not determine BGP state for %s from birdc output", peerConfig.Name)
 	return false, "Unknown"
 }
 
